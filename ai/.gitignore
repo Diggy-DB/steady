@@ -1,0 +1,11 @@
+# secrets (API keys, tokens, etc.)
+.env
+
+# call logs: will contain user data later
+logs/
+
+# Python's compiled-file cache (appears once you import your own modules)
+__pycache__/
+
+# macOs Finder clutter
+.DS_Store
