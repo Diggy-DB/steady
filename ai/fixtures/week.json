@@ -1,0 +1,24 @@
+{
+  "users": [
+    {"user_id": "user-1", "first_name": "Alex", "timezone": "America/Detroit"},
+    {"user_id": "user-2", "first_name": "Sam", "timezone": "America/Los_Angeles"}
+  ],
+  "events": [
+    {"event_id": "e1", "user_id": "user-1", "name": "CSE 232 lecture", "start": "2026-10-05T10:00:00-04:00", "end": "2026-10-05T12:00:00-04:00", "changeable": false},
+    {"event_id": "e2", "user_id": "user-1", "name": "Study session", "start": "2026-10-05T19:00:00-04:00", "end": "2026-10-05T21:00:00-04:00", "changeable": true},
+    {"event_id": "e3", "user_id": "user-1", "name": "Work shift", "start": "2026-10-06T17:00:00Z", "end": "2026-10-06T21:00:00Z", "changeable": false},
+    {"event_id": "e4", "user_id": "user-1", "name": "Gym", "start": "2026-10-06T18:00:00-04:00", "end": "2026-10-06T19:00:00-04:00", "changeable": true},
+    {"event_id": "e5", "user_id": "user-1", "name": "CSE 232 lecture", "start": "2026-10-07T10:00:00-04:00", "end": "2026-10-07T12:00:00-04:00", "changeable": false},
+    {"event_id": "e6", "user_id": "user-1", "name": "Study session", "start": "2026-10-07T14:00:00-04:00", "end": "2026-10-07T16:00:00-04:00", "changeable": true},
+    {"event_id": "e7", "user_id": "user-1", "name": "Work shift", "start": "2026-10-08T13:00:00-04:00", "end": "2026-10-08T17:00:00-04:00", "changeable": false},
+    {"event_id": "e8", "user_id": "user-1", "name": "AI club meeting", "start": "2026-10-08T18:00:00-04:00", "end": "2026-10-08T19:30:00-04:00", "changeable": false},
+    {"event_id": "e9", "user_id": "user-1", "name": "CSE 232 lecture", "start": "2026-10-09T10:00:00-04:00", "end": "2026-10-09T12:00:00-04:00", "changeable": false},
+    {"event_id": "e10", "user_id": "user-1", "name": "Study session", "start": "2026-10-09T14:00:00-04:00", "end": "2026-10-09T16:00:00-04:00", "changeable": true},
+    {"event_id": "e11", "user_id": "user-2", "name": "Dentist appointment", "start": "2026-10-05T09:00:00-07:00", "end": "2026-10-05T10:00:00-07:00", "changeable": false}
+  ],
+  "tasks": [
+    {"task_id": "t1", "user_id": "user-1", "name": "MTH 133 problem set", "description": "About 3 hours of work.", "due": "2026-10-08", "status": "NOT_STARTED", "changeable": true},
+    {"task_id": "t2", "user_id": "user-1", "name": "CSE 232 project", "description": "About 3 hours of work.", "due": "2026-10-09", "status": "IN_PROGRESS", "changeable": true},
+    {"task_id": "t3", "user_id": "user-1", "name": "Buy groceries", "description": "", "due": "2026-10-05", "status": "COMPLETED", "changeable": true}
+  ]
+}
