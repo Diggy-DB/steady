@@ -8,18 +8,40 @@ from datetime import UTC, datetime
 import openai
 
 from ai.llm import EXTRA_SAMPLING, SAMPLING, log_call, split_reasoning
+from ai.planning import (
+    FIND_FREE_SLOTS_TOOL,
+    PROPOSE_MOVE_EVENT_TOOL,
+    PROPOSE_NEW_EVENT_TOOL,
+    find_free_slots,
+    propose_move_event,
+    propose_new_event,
+)
 from ai.schedule import GET_SCHEDULE_TOOL, ToolContext, ToolError, describe_now, get_schedule
 
-MAX_ROUNDS = 5
+MAX_ROUNDS = 8  # a plan can need several rounds: look up, find time, then one or more proposals
 
 # Every tool the model may call: its name -> (definition the model sees, function your code runs).
-TOOLS = {"get_schedule": (GET_SCHEDULE_TOOL, get_schedule)}
+TOOLS = {
+    "get_schedule": (GET_SCHEDULE_TOOL, get_schedule),
+    "find_free_slots": (FIND_FREE_SLOTS_TOOL, find_free_slots),
+    "propose_new_event": (PROPOSE_NEW_EVENT_TOOL, propose_new_event),
+    "propose_move_event": (PROPOSE_MOVE_EVENT_TOOL, propose_move_event),
+}
 
 SYSTEM_PROMPT = """You are Steady, a planning assistant for a student.
 Current date and time: {now}.
 
 Rules:
 - Before answering anything about the user's schedule, look it up with get_schedule. Never guess.
+- To find time for something, use find_free_slots. Don't work out free time yourself.
+- You can't change the calendar. propose_new_event and propose_move_event only create suggestions
+  that the user accepts or declines, so say "I suggest", never "I added" or "I moved".
+- When you recommend a time for something, create it with propose_new_event or propose_move_event
+  so the user can accept it. Don't only describe it.
+- If there isn't enough free time, consider moving an event marked changeable: true, or splitting
+  the work into smaller blocks.
+- If a tool returns an error, fix the request and try again.
+- If the request is unclear (for example, which of several events it means), ask instead of guessing.
 - Never suggest a time that is already over.
 - Answer in at most 5 short sentences or bullet points. No tables, no emojis.
 - Don't invent facts or statistics."""

@@ -21,10 +21,14 @@ class ToolError(Exception):
 
 
 class FixtureStore:
-    """Reads users, events and tasks from a JSON file. A Supabase version will have the same methods."""
+    """Reads users, events and tasks from a JSON file. A Supabase version will have the same methods.
+
+    Suggestions are kept in memory only: the JSON file is never written, so every run starts fresh.
+    """
 
     def __init__(self, path: Path = FIXTURE):
         self.data = json.loads(path.read_text(encoding="utf-8"))
+        self._suggestions: list[dict] = []
 
     def user(self, user_id: str) -> dict:
         for user in self.data["users"]:
@@ -42,6 +46,13 @@ class FixtureStore:
         ]
         return sorted(found, key=lambda e: datetime.fromisoformat(e["start"]))
 
+    def event(self, user_id: str, event_id: str) -> dict | None:
+        """One of this user's events by id, or None. Another user's event counts as not found."""
+        for e in self.data["events"]:
+            if e["user_id"] == user_id and e["event_id"] == event_id:
+                return e
+        return None
+
     def tasks(self, user_id: str, first_day: date, last_day: date) -> list[dict]:
         """This user's tasks due between two days (inclusive)."""
         return [
@@ -49,6 +60,16 @@ class FixtureStore:
             for t in self.data["tasks"]
             if t["user_id"] == user_id and first_day <= date.fromisoformat(t["due"]) <= last_day
         ]
+
+    def suggestions(self, user_id: str, status: str | None = None) -> list[dict]:
+        """This user's suggestions, optionally only those with one status (e.g. "PENDING")."""
+        return [s for s in self._suggestions if s["user_id"] == user_id and status in (None, s["status"])]
+
+    def add_suggestion(self, user_id: str, suggestion: dict) -> dict:
+        """Store a new PENDING suggestion (a row in the planned ai_suggestions table) and return it."""
+        record = {"suggestion_id": f"s{len(self._suggestions) + 1}", "user_id": user_id, "status": "PENDING", **suggestion}
+        self._suggestions.append(record)
+        return record
 
 
 @dataclass
