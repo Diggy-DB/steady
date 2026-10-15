@@ -62,7 +62,7 @@ class FakeClient:
 def logged(monkeypatch) -> list[dict]:
     """Capture log records in a list instead of writing to logs/calls.jsonl."""
     records = []
-    monkeypatch.setattr("ai.agent.log_call", records.append)
+    monkeypatch.setattr("ai.agent.log_call", lambda record, path=None: records.append(record))
     return records
 
 
@@ -115,3 +115,26 @@ def test_arguments_that_are_not_json():
 def test_bad_date_goes_back_to_the_model():
     result = run_tool(context(), "get_schedule", json.dumps({"start_date": "tomorrow", "end_date": "2026-10-06"}))
     assert result.startswith("Error: start_date must be a date")
+
+
+def test_reminds_once_when_times_are_recommended_without_proposals(logged):
+    slots = {"start_date": "2026-10-07", "end_date": "2026-10-07", "minutes": 60}
+    gym = {"name": "Gym", "start": "2026-10-07 12:00", "end": "2026-10-07 13:00", "reason": "Free after class."}
+    client = FakeClient(
+        [
+            reply(tool_calls=[("find_free_slots", slots)]),
+            reply("You could go at 12:00 PM."),  # describes a time but proposes nothing
+            reply(tool_calls=[("propose_new_event", gym)]),
+            reply("I suggest the gym at 12 PM."),
+        ]
+    )
+    result = run_agent(client, "fake", context(), "When can I go to the gym?", verbose=False)
+    assert result["nudged"] and result["answer"] == "I suggest the gym at 12 PM."
+    reminder = client.requests[2]["messages"][-1]
+    assert reminder["role"] == "system" and "nothing to accept" in reminder["content"]
+
+
+def test_no_reminder_for_plain_questions(logged):
+    client = FakeClient([reply(tool_calls=[("get_schedule", TUESDAY)]), reply("Work 1-5 PM, gym 6-7 PM.")])
+    result = run_agent(client, "fake", context(), "What do I have tomorrow?", verbose=False)
+    assert not result["nudged"] and result["rounds"] == 2

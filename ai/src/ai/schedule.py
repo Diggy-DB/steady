@@ -4,6 +4,7 @@ The model only sees what get_schedule returns. Everything it can't be
 trusted with (which user, what time it is, time zone math) is decided here.
 """
 
+import copy
 import json
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -26,8 +27,9 @@ class FixtureStore:
     Suggestions are kept in memory only: the JSON file is never written, so every run starts fresh.
     """
 
-    def __init__(self, path: Path = FIXTURE):
-        self.data = json.loads(path.read_text(encoding="utf-8"))
+    def __init__(self, path: Path = FIXTURE, data: dict | None = None):
+        """Load the week from `path`, or use `data` (a dict in the same shape) if given."""
+        self.data = copy.deepcopy(data) if data is not None else json.loads(path.read_text(encoding="utf-8"))
         self._suggestions: list[dict] = []
 
     def user(self, user_id: str) -> dict:
@@ -70,6 +72,30 @@ class FixtureStore:
         record = {"suggestion_id": f"s{len(self._suggestions) + 1}", "user_id": user_id, "status": "PENDING", **suggestion}
         self._suggestions.append(record)
         return record
+
+    def set_status(self, suggestion_id: str, status: str) -> None:
+        for s in self._suggestions:
+            if s["suggestion_id"] == suggestion_id:
+                s["status"] = status
+
+    def apply(self, suggestion: dict) -> None:
+        """Make an accepted suggestion real, in memory only. In the real app the backend does this."""
+        change = suggestion["proposed_change"]
+        if suggestion["type"] == "CREATE_EVENT":
+            self.data["events"].append(
+                {
+                    "event_id": f"ai-{suggestion['suggestion_id']}",
+                    "user_id": suggestion["user_id"],
+                    "name": change["name"],
+                    "start": change["start"],
+                    "end": change["end"],
+                    "changeable": True,
+                    "created_by": "AI",
+                }
+            )
+        elif suggestion["type"] == "MOVE_EVENT":
+            event = self.event(suggestion["user_id"], suggestion["target_id"])
+            event["start"], event["end"] = change["start"], change["end"]
 
 
 @dataclass

@@ -17,8 +17,9 @@ def context(user_id: str = "user-1") -> ToolContext:
     return ToolContext(store=FixtureStore(), user_id=user_id, now=MONDAY_EVENING)
 
 
-def free_times(result: dict) -> list[tuple[str, str]]:
-    return [(slot["start"], slot["end"]) for slot in result["free"]]
+def free_times(result: dict) -> list[str]:
+    """Flatten the per-day result into "YYYY-MM-DD HH:MM-HH:MM" strings."""
+    return [f"{day['date']} {slot}" for day in result["days"] for slot in day["free"]]
 
 
 def test_round_up_to_quarter_hour():
@@ -29,22 +30,16 @@ def test_round_up_to_quarter_hour():
 def test_free_slots_skip_busy_times():
     # Wednesday: lecture 10-12 and study session 2-4 PM; the day runs 8 AM to 10 PM.
     result = find_free_slots(context(), "2026-10-07", "2026-10-07", 60)
-    assert free_times(result) == [
-        ("2026-10-07 08:00", "2026-10-07 10:00"),
-        ("2026-10-07 12:00", "2026-10-07 14:00"),
-        ("2026-10-07 16:00", "2026-10-07 22:00"),
-    ]
+    assert free_times(result) == ["2026-10-07 08:00-10:00", "2026-10-07 12:00-14:00", "2026-10-07 16:00-22:00"]
 
 
 def test_free_slots_never_in_the_past():
     # Monday at 6:30 PM: only 6:30-7 PM (30 min) and 9-10 PM (60 min) are left.
     assert free_times(find_free_slots(context(), "2026-10-05", "2026-10-05", 30)) == [
-        ("2026-10-05 18:30", "2026-10-05 19:00"),
-        ("2026-10-05 21:00", "2026-10-05 22:00"),
+        "2026-10-05 18:30-19:00",
+        "2026-10-05 21:00-22:00",
     ]
-    assert free_times(find_free_slots(context(), "2026-10-05", "2026-10-05", 60)) == [
-        ("2026-10-05 21:00", "2026-10-05 22:00"),
-    ]
+    assert free_times(find_free_slots(context(), "2026-10-05", "2026-10-05", 60)) == ["2026-10-05 21:00-22:00"]
 
 
 def test_free_slots_rejects_bad_minutes():
@@ -85,7 +80,7 @@ def test_proposals_cannot_overlap_each_other():
     propose_new_event(ctx, "Gym", "2026-10-07 12:30", "2026-10-07 13:30", "")
     with pytest.raises(ToolError, match="pending suggestion s1"):
         propose_new_event(ctx, "Reading", "2026-10-07 13:00", "2026-10-07 14:00", "")
-    assert ("2026-10-07 12:30", "2026-10-07 13:30") not in free_times(find_free_slots(ctx, "2026-10-07", "2026-10-07", 30))
+    assert "2026-10-07 12:00-14:00" not in free_times(find_free_slots(ctx, "2026-10-07", "2026-10-07", 30))
 
 
 def test_fixed_event_cannot_be_moved():
@@ -115,3 +110,31 @@ def test_cannot_move_an_event_that_is_over():
 
 def test_agent_offers_all_four_tools():
     assert set(TOOLS) == {"get_schedule", "find_free_slots", "propose_new_event", "propose_move_event"}
+
+
+def test_free_slots_leave_out_full_days():
+    # Thursday from 8 AM: work 1-5 PM and club 6-7:30 PM leave 8 AM-1 PM, 5-6 PM, 7:30-10 PM; nothing is 6 hours.
+    assert find_free_slots(context(), "2026-10-08", "2026-10-08", 360)["days"] == []
+
+
+def test_new_event_in_a_moved_events_old_time_depends_on_the_move():
+    ctx = context()
+    # Move tonight's study session (7-9 PM) later; its old time becomes usable, but only together with the move.
+    propose_move_event(ctx, "e2", "2026-10-05 21:00", "2026-10-05 23:00", "Make room for the assignment.")
+    assert "2026-10-05 18:30-21:00" in free_times(find_free_slots(ctx, "2026-10-05", "2026-10-05", 60))
+    result = propose_new_event(ctx, "Assignment", "2026-10-05 18:30", "2026-10-05 21:00", "Due tonight.")
+    assert "s1" in result["summary"]
+    assert ctx.store.suggestions("user-1")[1]["depends_on"] == ["s1"]
+
+
+def test_independent_proposal_has_no_dependencies():
+    ctx = context()
+    propose_new_event(ctx, "Gym", "2026-10-07 12:30", "2026-10-07 13:30", "")
+    assert ctx.store.suggestions("user-1")[0]["depends_on"] == []
+
+
+def test_an_event_can_only_have_one_pending_move():
+    ctx = context()
+    propose_move_event(ctx, "e6", "2026-10-07 16:00", "2026-10-07 18:00", "")
+    with pytest.raises(ToolError, match="already has a pending move"):
+        propose_move_event(ctx, "e6", "2026-10-07 18:00", "2026-10-07 20:00", "")

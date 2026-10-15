@@ -9,3 +9,6 @@ __pycache__/
 
 # macOs Finder clutter
 .DS_Store
+
+# training data: can get large; keep it on a RunPod volume or a private Hugging Face dataset
+data/

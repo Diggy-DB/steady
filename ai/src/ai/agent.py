@@ -1,13 +1,15 @@
 """The agent loop: the model may call tools, one round at a time, until it can answer."""
 
 import json
+import re
 import time
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 import openai
 
-from ai.llm import EXTRA_SAMPLING, SAMPLING, log_call, split_reasoning
+from ai.llm import EXTRA_SAMPLING, LOG_FILE, SAMPLING, log_call, split_reasoning
 from ai.planning import (
     FIND_FREE_SLOTS_TOOL,
     PROPOSE_MOVE_EVENT_TOOL,
@@ -40,11 +42,21 @@ Rules:
   so the user can accept it. Don't only describe it.
 - If there isn't enough free time, consider moving an event marked changeable: true, or splitting
   the work into smaller blocks.
+- Count what is already on the calendar toward the user's goals (for example, an existing study
+  session counts toward "study 4 hours this week").
 - If a tool returns an error, fix the request and try again.
 - If the request is unclear (for example, which of several events it means), ask instead of guessing.
 - Never suggest a time that is already over.
 - Answer in at most 5 short sentences or bullet points. No tables, no emojis.
 - Don't invent facts or statistics."""
+
+# A recommended time in an answer, like "7 PM", "7:30 pm" or "19:00".
+TIME_PATTERN = re.compile(r"\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\b\d{1,2}:\d{2}\b", re.IGNORECASE)
+
+NUDGE = (
+    "You recommended times but didn't create any suggestions, so the user has nothing to accept. "
+    "Create them now with propose_new_event or propose_move_event, then give your final answer."
+)
 
 
 def run_tool(ctx: ToolContext, name: str, arguments_json: str) -> str:
@@ -78,11 +90,26 @@ def run_tool(ctx: ToolContext, name: str, arguments_json: str) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-def run_agent(client: openai.OpenAI, model: str, ctx: ToolContext, question: str, verbose: bool = True) -> dict:
-    """Answer one question, letting the model call tools first. Logs every round."""
+def run_agent(
+    client: openai.OpenAI,
+    model: str,
+    ctx: ToolContext,
+    question: str,
+    verbose: bool = True,
+    log_path: Path = LOG_FILE,
+    history: list[dict] | None = None,
+) -> dict:
+    """Answer one question, letting the model call tools first. Logs every round to `log_path`.
+
+    `history` holds earlier turns of the chat as {"role": "user" | "assistant", "content": ...},
+    final answers only (no thinking), as Qwen recommends.
+    """
     run_id = uuid.uuid4().hex[:8]  # groups this question's rounds in the log
+    total_tokens, total_seconds = 0, 0.0  # for measuring speed in evals
+    searched_free_time, proposals, nudged = False, 0, False  # for the reminder below
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT.format(now=describe_now(ctx.now))},
+        *(history or []),
         {"role": "user", "content": question},
     ]
 
@@ -98,6 +125,8 @@ def run_agent(client: openai.OpenAI, model: str, ctx: ToolContext, question: str
         start = time.perf_counter()
         response = client.chat.completions.create(**request)
         seconds = round(time.perf_counter() - start, 2)
+        total_tokens += response.usage.completion_tokens if response.usage else 0
+        total_seconds += seconds
 
         message = response.choices[0].message
         reasoning, answer = split_reasoning(message.model_dump())
@@ -115,26 +144,52 @@ def run_agent(client: openai.OpenAI, model: str, ctx: ToolContext, question: str
                 "finish_reason": response.choices[0].finish_reason,
                 "usage": response.usage.model_dump() if response.usage else None,
                 "seconds": seconds,
-            }
+            },
+            log_path,
         )
 
         if not tool_calls:  # no tool requested: this is the final answer
+            # Small models often describe a plan instead of proposing it. Remind them once, in code.
+            if searched_free_time and not proposals and not nudged and TIME_PATTERN.search(answer):
+                nudged = True
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "system", "content": NUDGE})
+                if verbose:
+                    print(f"round {round_number}: answered with times but no proposals; reminding the model")
+                continue
             if verbose:
                 print(f"round {round_number}: answered ({seconds}s)")
-            return {"answer": answer, "rounds": round_number, "messages": messages, "run_id": run_id}
+            return {
+                "answer": answer,
+                "reasoning": reasoning,
+                "rounds": round_number,
+                "messages": messages,
+                "run_id": run_id,
+                "tokens": total_tokens,
+                "seconds": round(total_seconds, 1),
+                "nudged": nudged,
+            }
 
         # Send the tool call back as part of the conversation, with its thinking.
         messages.append({"role": "assistant", "content": answer, "reasoning_content": reasoning, "tool_calls": tool_calls})
         for call in tool_calls:
             name, arguments = call["function"]["name"], call["function"]["arguments"]
             result = run_tool(ctx, name, arguments)
+            if name == "find_free_slots":
+                searched_free_time = True
+            if name.startswith("propose_") and not result.startswith("Error"):
+                proposals += 1
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
             if verbose:
                 print(f"round {round_number}: {name}({arguments}) ({seconds}s) -> {result[:100]}...")
 
     return {
         "answer": "Sorry, I couldn't finish that. Could you ask in a simpler way?",
+        "reasoning": "",
         "rounds": MAX_ROUNDS,
         "messages": messages,
         "run_id": run_id,
+        "tokens": total_tokens,
+        "seconds": round(total_seconds, 1),
+        "nudged": nudged,
     }
