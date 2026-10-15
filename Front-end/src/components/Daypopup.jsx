@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { mockEvents, mockTasks, mockJournals } from "../data/mockData";
+import { mockTasks, mockJournals } from "../data/mockData";
 
 const statusLabels = {
   NOT_STARTED: "Not Started",
@@ -7,13 +7,31 @@ const statusLabels = {
   COMPLETED: "Completed",
 };
 
-function DayPopup({ date, onClose }) {
+function DayPopup({ date, events: allEvents, onAddEvent, onDeleteEvent, onClose }) {
   const [activeTab, setActiveTab] = useState("calendar");
+  const [name, setName] = useState("");
+  const [startTime, setStartTime] = useState("9:00");
+  const [endTime, setEndTime] = useState("10:00");
+  const [isFixed, setIsFixed] = useState(false);
 
-  const events = mockEvents.filter((e) => e.start_date === date);
+  const events = allEvents.filter((e) => e.start_date === date);
   const tasks = mockTasks.filter((t) => t.date === date);
   const journal = mockJournals.find((j) => j.date === date);
-
+function handleAdd() {
+  if (name.trim() === "" || endTime <= startTime) return;
+  onAddEvent({
+    event_id: Date.now(),
+    name: name,
+    start_time: startTime,
+    end_time: endTime,
+    start_date: date,
+    end_date: date,
+    recurrence_rule: null,
+    changeable: !isFixed,
+    created_by: "USER",
+  });
+  setName("");
+}
   return (
     <div className="popup-overlay" onClick={onClose}>
       <div className="popup" onClick={(e) => e.stopPropagation()}>
@@ -49,8 +67,10 @@ function DayPopup({ date, onClose }) {
                 <strong>{event.name}</strong>
                 <p>{event.start_time} – {event.end_time}</p>
                 {!event.changeable && <p>🔒 Fixed</p>}
+                <button onClick={() => onDeleteEvent(event.event_id)}>Delete</button>
               </div>
             ))}
+            {newFunction()}            
           </div>
         )}
 
@@ -75,6 +95,26 @@ function DayPopup({ date, onClose }) {
       </div>
     </div>
   );
+
+  function newFunction() {
+    return <div className="add-event">
+      <h3>Add event</h3>
+      <input
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Event name" />
+      <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+      <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+      <label>
+        <input
+          type="checkbox"
+          checked={isFixed}
+          onChange={(e) => setIsFixed(e.target.checked)} />
+        Fixed (AI can't move it)
+      </label>
+      <button onClick={handleAdd}>Add</button>
+    </div>;
+  }
 }
 
 export default DayPopup;
