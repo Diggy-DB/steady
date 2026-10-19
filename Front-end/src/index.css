@@ -74,13 +74,13 @@
 }
 .item p {
   margin: 4px 0;
-  .day-cell.today {
+}
+.day-cell.today {
   border: 2px solid #4a5bd4;
   font-weight: bold;
 }
 .day-cell.selected {
   background: #dde1ff;
-}
 }
 body {
   font-family: system-ui, sans-serif;
@@ -169,4 +169,78 @@ body {
 .chat-input input {
   flex: 1;
   padding: 6px;
+}
+/* Sign-in / sign-up */
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+}
+.auth-form input {
+  padding: 8px;
+}
+.auth-message,
+.error {
+  color: #b42318;
+}
+button.link {
+  background: none;
+  border: none;
+  color: #4a5bd4;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* Header and month navigation */
+.app-header,
+.month-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* AI suggestion cards inside chat bubbles */
+.suggestion {
+  background: white;
+  color: #222;
+  border: 1px solid #c9cdf5;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+}
+.suggestion p {
+  margin: 4px 0;
+}
+.suggestion-reason {
+  color: #555;
+  font-size: 0.9em;
+}
+.suggestion-buttons {
+  display: flex;
+  gap: 6px;
+}
+.suggestion-buttons button {
+  flex: 1;
+  padding: 6px;
+  border-radius: 6px;
+  border: 1px solid #4a5bd4;
+  background: #4a5bd4;
+  color: white;
+  cursor: pointer;
+}
+.suggestion-buttons button.secondary {
+  background: white;
+  color: #4a5bd4;
+}
+.suggestion-status {
+  font-weight: bold;
+}
+.suggestion-error {
+  color: #b42318;
+  font-size: 0.9em;
+}
+.bubble.thinking {
+  font-style: italic;
+  color: #555;
 }

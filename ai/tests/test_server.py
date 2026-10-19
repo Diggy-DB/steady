@@ -58,7 +58,7 @@ def test_check_then_accept_applies_the_suggestion(api):
     propose_new_event(ctx, **GYM)
     assert api.post("/suggestions/s1/check").json() == {"valid": True, "problems": [], "accept_first": []}
     assert api.post("/suggestions/s1/accept").json()["status"] == "ACCEPTED"
-    assert any(e["name"] == "Gym" and e["created_by"] == "AI" for e in ai.server.demo_store.data["events"])
+    assert any(e["name"] == "Gym" and e.get("created_by") == "AI" for e in ai.server.demo_store.data["events"])
     assert api.post("/suggestions/s1/accept").status_code == 409  # already accepted
 
 
@@ -94,3 +94,76 @@ def test_decline(api):
 def test_real_data_mode_needs_a_token(api, monkeypatch):
     monkeypatch.setattr(ai.server, "STORE", "supabase")
     assert api.post("/chat", json={"message": "Hi"}).status_code == 401
+
+
+def test_supabase_mode_end_to_end(monkeypatch):
+    """Real-data mode against a fake Supabase: token check, chat proposal, accept, database rows."""
+    from test_supabase_store import TOKEN, FakeSupabase
+
+    import httpx
+
+    from ai.supabase_store import SupabaseStore
+
+    fake = FakeSupabase()
+    monkeypatch.setattr(ai.server, "STORE", "supabase")
+    monkeypatch.setattr("ai.agent.log_call", lambda record, path=None: None)
+    monkeypatch.setattr(ai.server, "SUPABASE_URL", "https://example.supabase.co")
+
+    class AuthReply:  # what Supabase's /auth/v1/user answers for a valid token
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"id": "user-1"}
+
+    monkeypatch.setattr(ai.server.httpx, "get", lambda url, headers, timeout: AuthReply())
+    monkeypatch.setattr(
+        ai.server, "SupabaseStore",
+        lambda url, key, token: SupabaseStore(url, key, token, transport=httpx.MockTransport(fake.handle)),
+    )
+    move = {"event_id": "2", "new_start": "2026-10-05 21:00", "new_end": "2026-10-05 23:00", "reason": "Later."}
+    use_model(monkeypatch, [reply(tool_calls=[("propose_move_event", move)]), reply("I suggest 9 PM.")])
+    monkeypatch.setattr(ai.server, "datetime", _FrozenDatetime)  # the fake week's Monday 6:30 PM, not today
+
+    api = TestClient(ai.server.app)
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    body = api.post("/chat", json={"message": "Move my study session to 9 PM."}, headers=auth).json()
+    [suggestion] = body["suggestions"]
+    assert api.post(f"/suggestions/{suggestion['suggestion_id']}/accept", headers=auth).json()["status"] == "ACCEPTED"
+
+    event = next(e for e in fake.tables["calendar_events"] if e["event_id"] == 2)
+    assert event["start_time"] == "21:00:00"
+    assert fake.tables["activity_log"][0]["action"] == "SUGGESTION_ACCEPTED"
+
+
+class _FrozenDatetime:
+    """Stands in for datetime in ai.server so 'now' is Monday Oct 5, 2026, 6:30 PM."""
+
+    from datetime import datetime as _real
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._real(2026, 10, 5, 18, 30, tzinfo=tz)
+
+    @classmethod
+    def fromisoformat(cls, text):
+        return cls._real.fromisoformat(text)
+
+
+def test_model_failure_is_a_clear_error_the_browser_can_read(api, monkeypatch):
+    import httpx
+    import openai
+
+    class BrokenModel:
+        base_url = "http://fake"
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**request):
+                    raise openai.APIConnectionError(request=httpx.Request("POST", "http://fake/v1/chat/completions"))
+
+    monkeypatch.setattr(ai.server, "llm", BrokenModel)
+    response = api.post("/chat", json={"message": "Hi"}, headers={"Origin": "http://localhost:5173"})
+    assert response.status_code == 502 and "AI model isn't available" in response.json()["detail"]
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"

@@ -2,9 +2,9 @@
 
     POST /chat                          ask a question; returns the reply and any new suggestions
     GET  /suggestions                   the user's pending suggestions
-    POST /suggestions/{id}/check        re-run the checks right before an Accept is applied
-    POST /suggestions/{id}/accept       demo mode only: apply a suggestion to the fake week
-    POST /suggestions/{id}/decline      demo mode only
+    POST /suggestions/{id}/check        re-run the checks (what Accept does first)
+    POST /suggestions/{id}/accept       check again, apply the change, mark it ACCEPTED, log it
+    POST /suggestions/{id}/decline      mark it DECLINED, log it
     GET  /health
 
 Two modes, chosen with the STORE environment variable:
@@ -13,7 +13,7 @@ Two modes, chosen with the STORE environment variable:
   DEMO_NOW (default Monday Oct 5, 2026, 6:30 PM) so the fake week makes sense.
 - STORE=supabase: real data. The caller sends the user's Supabase access token as
   "Authorization: Bearer <token>"; it is checked with Supabase, and every database request
-  is made with it, so Row Level Security applies. Accept/decline are the backend's job.
+  is made with it, so Row Level Security applies.
 
 Run locally (from ai/):
     uv run uvicorn ai.server:app --port 8000
@@ -25,7 +25,10 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+import openai
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ai.agent import run_agent
@@ -34,15 +37,40 @@ from ai.planning import recheck
 from ai.schedule import FixtureStore, ToolContext
 from ai.supabase_store import SupabaseStore
 
+settings = load_settings()  # also loads ai/.env, so it must come before the os.getenv calls below
+llm = make_client(settings)
+
 STORE = os.getenv("STORE", "fixture")
 DEMO_NOW = os.getenv("DEMO_NOW", "2026-10-05 18:30")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+if STORE == "supabase" and not (SUPABASE_URL and SUPABASE_ANON_KEY):
+    raise RuntimeError("STORE=supabase needs SUPABASE_URL and SUPABASE_ANON_KEY (see .env.example)")
+# Web pages allowed to call this API from the browser (the frontend's dev server by default).
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 
 app = FastAPI(title="Steady Planner AI")
-settings = load_settings()
-llm = make_client(settings)
+app.add_middleware(
+    CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["Authorization", "Content-Type", "X-User-Id"]
+)
 demo_store = FixtureStore()  # one shared copy, so suggestions survive between requests in demo mode
+
+
+# Turn failures of the services we depend on into clear JSON errors. An unhandled crash would also
+# lose the CORS headers, and the browser would only say "Failed to fetch".
+@app.exception_handler(openai.APIError)
+def model_unavailable(request: Request, error: openai.APIError) -> JSONResponse:
+    return JSONResponse(status_code=502, content={"detail": f"The AI model isn't available right now: {error.message}"})
+
+
+@app.exception_handler(httpx.HTTPError)
+def database_unavailable(request: Request, error: httpx.HTTPError) -> JSONResponse:
+    return JSONResponse(status_code=502, content={"detail": f"The database request failed: {error}"})
+
+
+@app.exception_handler(LookupError)
+def not_applied(request: Request, error: LookupError) -> JSONResponse:
+    return JSONResponse(status_code=409, content={"detail": str(error)})
 
 
 class ChatTurn(BaseModel):
@@ -130,14 +158,8 @@ def check_suggestion(suggestion_id: str, ctx: ToolContext = Depends(context)) ->
     return {"valid": not problems, "problems": problems, "accept_first": waiting_for}
 
 
-def demo_only() -> None:
-    if STORE != "fixture":
-        raise HTTPException(501, "with real data, the backend applies accepted suggestions")
-
-
 @app.post("/suggestions/{suggestion_id}/accept")
 def accept(suggestion_id: str, ctx: ToolContext = Depends(context)) -> dict:
-    demo_only()
     suggestion = find_suggestion(ctx, suggestion_id)
     checked = check_suggestion(suggestion_id, ctx)
     if checked["accept_first"]:
@@ -146,12 +168,16 @@ def accept(suggestion_id: str, ctx: ToolContext = Depends(context)) -> dict:
         raise HTTPException(409, "; ".join(checked["problems"]))
     ctx.store.apply(suggestion)
     ctx.store.set_status(suggestion_id, "ACCEPTED")
+    ctx.store.log(ctx.user_id, "SUGGESTION_ACCEPTED", "ai_suggestion", suggestion_id, "USER",
+                  {"type": suggestion["type"], "target_id": suggestion["target_id"], "change": suggestion["proposed_change"]})
     return {"suggestion_id": suggestion_id, "status": "ACCEPTED"}
 
 
 @app.post("/suggestions/{suggestion_id}/decline")
 def decline(suggestion_id: str, ctx: ToolContext = Depends(context)) -> dict:
-    demo_only()
-    find_suggestion(ctx, suggestion_id)
+    suggestion = find_suggestion(ctx, suggestion_id)
+    if suggestion["status"] != "PENDING":
+        raise HTTPException(409, f"it is already {suggestion['status']}")
     ctx.store.set_status(suggestion_id, "DECLINED")
+    ctx.store.log(ctx.user_id, "SUGGESTION_DECLINED", "ai_suggestion", suggestion_id, "USER", {"type": suggestion["type"]})
     return {"suggestion_id": suggestion_id, "status": "DECLINED"}

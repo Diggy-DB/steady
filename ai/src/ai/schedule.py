@@ -31,6 +31,7 @@ class FixtureStore:
         """Load the week from `path`, or use `data` (a dict in the same shape) if given."""
         self.data = copy.deepcopy(data) if data is not None else json.loads(path.read_text(encoding="utf-8"))
         self._suggestions: list[dict] = []
+        self.activity: list[dict] = []
 
     def user(self, user_id: str) -> dict:
         for user in self.data["users"]:
@@ -78,8 +79,14 @@ class FixtureStore:
             if s["suggestion_id"] == suggestion_id:
                 s["status"] = status
 
+    def log(self, user_id: str, action: str, target_type: str, target_id: str, performed_by: str, details: dict) -> None:
+        self.activity.append(
+            {"user_id": user_id, "action": action, "target_type": target_type, "target_id": target_id,
+             "performed_by": performed_by, "details": details}
+        )
+
     def apply(self, suggestion: dict) -> None:
-        """Make an accepted suggestion real, in memory only. In the real app the backend does this."""
+        """Make an accepted suggestion real, in memory only (Supabase mode writes to the database)."""
         change = suggestion["proposed_change"]
         if suggestion["type"] == "CREATE_EVENT":
             self.data["events"].append(

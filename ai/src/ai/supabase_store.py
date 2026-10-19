@@ -9,6 +9,7 @@ user's local time, tasks have a `date`. Rows are converted to the same shape
 FixtureStore returns, so the tools can't tell the two stores apart.
 
 Not handled yet: recurring events (recurrence_rule) are treated as one-off events.
+The tables are created by supabase/migrations/20261015120000_steady_planner_schema.sql.
 """
 
 from datetime import date, datetime, time
@@ -95,13 +96,58 @@ class SupabaseStore:
         return [self._suggestion(row) for row in self._get("ai_suggestions", params)]
 
     def add_suggestion(self, user_id: str, suggestion: dict) -> dict:
+        target = suggestion.get("target_id")
         response = self.client.post(
             "/ai_suggestions",
-            json={"user_id": user_id, "status": "PENDING", **suggestion},
+            json={
+                "user_id": user_id,
+                "status": "PENDING",
+                **suggestion,
+                "target_id": int(target) if target is not None else None,  # event ids are numbers in the database
+            },
             headers={"Prefer": "return=representation"},  # send back the new row, with its id
         )
         response.raise_for_status()
         return self._suggestion(response.json()[0])
+
+    # ---- Writes used when the user accepts or declines a suggestion ----
+
+    def _write(self, method: str, table: str, params: list[tuple[str, str]] | None, body: dict) -> list[dict]:
+        """Insert or update rows; returns the rows written (an empty list means RLS or a filter matched nothing)."""
+        response = self.client.request(
+            method, f"/{table}", params=params or [], json=body, headers={"Prefer": "return=representation"}
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def set_status(self, suggestion_id: str, status: str) -> None:
+        if not self._write("PATCH", "ai_suggestions", [("suggestion_id", f"eq.{suggestion_id}")], {"status": status}):
+            raise LookupError(f"suggestion {suggestion_id} wasn't updated")
+
+    def apply(self, suggestion: dict) -> None:
+        """Make an accepted suggestion real in calendar_events, with the user's own token."""
+        tz = ZoneInfo(self.user(suggestion["user_id"])["timezone"])
+        change = suggestion["proposed_change"]
+        start = datetime.fromisoformat(change["start"]).astimezone(tz)
+        end = datetime.fromisoformat(change["end"]).astimezone(tz)
+        times = {
+            "start_date": start.date().isoformat(),
+            "start_time": f"{start:%H:%M:%S}",
+            "end_date": end.date().isoformat(),
+            "end_time": f"{end:%H:%M:%S}",
+        }
+        if suggestion["type"] == "CREATE_EVENT":
+            body = {"user_id": suggestion["user_id"], "name": change["name"], **times, "changeable": True, "created_by": "AI"}
+            written = self._write("POST", "calendar_events", None, body)
+        else:
+            written = self._write("PATCH", "calendar_events", [("event_id", f"eq.{suggestion['target_id']}")], times)
+        if not written:
+            raise LookupError(f"suggestion {suggestion['suggestion_id']} couldn't be applied")
+
+    def log(self, user_id: str, action: str, target_type: str, target_id: str, performed_by: str, details: dict) -> None:
+        body = {"user_id": user_id, "action": action, "target_type": target_type, "target_id": target_id,
+                "performed_by": performed_by, "details": details}
+        self._write("POST", "activity_log", None, body)
 
     # ---- Converting rows to the shape the tools expect ----
 

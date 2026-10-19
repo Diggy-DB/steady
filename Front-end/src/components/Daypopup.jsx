@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { mockTasks, mockJournals } from "../data/mockData";
 
 const statusLabels = {
   NOT_STARTED: "Not Started",
@@ -7,20 +6,19 @@ const statusLabels = {
   COMPLETED: "Completed",
 };
 
-function DayPopup({ date, events: allEvents, onAddEvent, onDeleteEvent, onClose }) {
+function DayPopup({ date, events: allEvents, tasks: allTasks = [], journals: allJournals = [], onAddEvent, onDeleteEvent, onClose }) {
   const [activeTab, setActiveTab] = useState("calendar");
   const [name, setName] = useState("");
-  const [startTime, setStartTime] = useState("9:00");
+  const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("10:00");
   const [isFixed, setIsFixed] = useState(false);
 
   const events = allEvents.filter((e) => e.start_date === date);
-  const tasks = mockTasks.filter((t) => t.date === date);
-  const journal = mockJournals.find((j) => j.date === date);
+  const tasks = allTasks.filter((t) => t.date === date);
+  const journal = allJournals.find((j) => j.date === date);
 function handleAdd() {
   if (name.trim() === "" || endTime <= startTime) return;
   onAddEvent({
-    event_id: Date.now(),
     name: name,
     start_time: startTime,
     end_time: endTime,

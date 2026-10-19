@@ -1,23 +1,29 @@
-# Stage 5: the AI service API (for the frontend and backend)
+# Stage 5: the backend API (AI chat + suggestions)
 
-`src/ai/server.py` is a small FastAPI app around the agent. Run it from `ai/`:
+`src/ai/server.py` is the backend: a FastAPI app around the agent. Everyday reading and
+writing of events, tasks and journal entries goes straight from the frontend to Supabase
+(protected by Row Level Security); this API handles everything that needs server-side logic:
+the AI chat, and accepting or declining the AI's suggestions with every rule checked again.
+
+Run it from `ai/`:
 
 ```bash
 uv run uvicorn ai.server:app --port 8000
-# then open http://localhost:8000/docs for an interactive page with every endpoint
+# interactive docs for every endpoint: http://localhost:8000/docs
 ```
 
-## Two modes
+## Two modes (`STORE` in `ai/.env`)
 
 | | `STORE=fixture` (default, **demo mode**) | `STORE=supabase` (real data) |
 |---|---|---|
-| Data | the fake week in `fixtures/week.json`, in memory | Supabase tables, through the REST API |
+| Data | the fake week in `fixtures/week.json`, in memory | the Supabase tables in `supabase/migrations/` |
 | Who is the user | `X-User-Id` header (default `user-1`) | `Authorization: Bearer <Supabase access token>`, checked with Supabase |
 | Clock | fixed at `DEMO_NOW` (Mon Oct 5, 2026, 6:30 PM), to match the fake week | real time in the user's time zone |
-| Accept / Decline | done here, in memory (so the frontend can be demoed now) | the backend's job (endpoints return 501) |
 
 In Supabase mode every database request uses the user's own token, so Row Level Security
-applies: the AI service can't read another user's rows even if the code had a bug.
+applies: the API can't read or change another user's rows even if the code had a bug. It
+uses the project's anon key, never the service-role key. The server refuses to start in
+Supabase mode without `SUPABASE_URL` and `SUPABASE_ANON_KEY`.
 
 ## Endpoints
 
@@ -34,8 +40,7 @@ applies: the AI service can't read another user's rows even if the code had a bu
 ```
 
 - `history`: earlier turns, **final answers only**, oldest first, at most 20. Roles can only be
-  `user` or `assistant` (a `system` message is rejected with 422, so callers can't add instructions).
-- From the frontend's `ChatWidget`: `sender: "USER"` → `role: "user"`, `sender: "AI"` → `role: "assistant"`.
+  `user` or `assistant`; a `system` message is rejected (422), so callers can't add instructions.
 
 Response:
 
@@ -44,102 +49,59 @@ Response:
   "reply": "I suggest moving your study session to 8:00–10:00 PM. It's pending your approval.",
   "suggestions": [
     {
-      "suggestion_id": "s1",
+      "suggestion_id": "12",
       "type": "MOVE_EVENT",
-      "target_id": "e2",
+      "target_id": "7",
       "description": "Move study session to start at 8 PM",
-      "proposed_change": {"start": "2026-10-05T20:00:00-04:00", "end": "2026-10-05T22:00:00-04:00"},
+      "proposed_change": {"start": "2026-10-19T20:00:00-04:00", "end": "2026-10-19T22:00:00-04:00"},
       "depends_on": [],
       "status": "PENDING",
-      "created_at": "2026-10-05T18:30:00-04:00",
-      "expires_at": "2026-10-05T20:00:00-04:00"
+      "created_at": "2026-10-19T18:30:00-04:00",
+      "expires_at": "2026-10-19T20:00:00-04:00"
     }
   ],
   "run_id": "c65192f2"
 }
 ```
 
-- Show `reply` as the AI's chat bubble.
-- Show each item in `suggestions` as a card with **Accept** / **Decline**. Only these buttons
-  change anything; the chat text never does.
-- Replies are slow on a laptop (30 seconds to several minutes for planning questions); show a
-  "thinking…" state. A GPU on RunPod is much faster.
+The frontend's `ChatWidget` shows `reply` as a bubble and each suggestion as a card with
+**Accept** / **Decline**. Only those buttons change anything.
 
 ### `GET /suggestions`
 
-The user's pending suggestions (for showing cards on the home page).
+The user's pending suggestions.
 
 ### `POST /suggestions/{id}/check`
 
-Re-runs every check against the calendar **as it is now**:
+Re-runs every check against the calendar as it is now:
 
 ```json
-{"valid": false, "problems": ["Wednesday, October 7, 12:30 PM – 1:30 PM overlaps Lunch with Sam (...)"], "accept_first": []}
+{"valid": false, "problems": ["... overlaps Lunch with Sam (...)"], "accept_first": []}
 ```
 
-- `accept_first`: suggestions this one depends on that are still pending (see `depends_on` below).
+### `POST /suggestions/{id}/accept`
 
-### `POST /suggestions/{id}/accept`, `POST /suggestions/{id}/decline` (demo mode only)
+1. Re-runs the checks; refuses with **409** if a problem was found (e.g. the time is no longer
+   free) or if a suggestion in `depends_on` is still pending ("accept 11 first").
+2. Applies the change: `MOVE_EVENT` updates the event's times; `CREATE_EVENT` inserts an event
+   with `created_by = 'AI'`.
+3. Marks the suggestion `ACCEPTED` and writes an `activity_log` entry.
 
-Accept runs the check, refuses with 409 if it fails or if `accept_first` isn't empty, then
-applies the change to the in-memory week.
+### `POST /suggestions/{id}/decline`
 
-## What the backend does on Accept (Supabase mode)
+Marks it `DECLINED` and writes an `activity_log` entry.
 
-1. Call `POST /suggestions/{id}/check` with the user's token (or run the same checks).
-2. If `valid` is false or `accept_first` isn't empty, don't apply it; show the problem.
-3. Apply it in one transaction:
-   - `CREATE_EVENT`: insert into `calendar_events` with `created_by = 'AI'`, `changeable = true`.
-   - `MOVE_EVENT`: update the event `target_id` to the new times.
-4. Set the suggestion's `status` to `ACCEPTED` (or `DECLINED` on Decline) and write the activity log.
-5. Suggestions whose `expires_at` has passed can be marked `EXPIRED`.
-
-### `depends_on`
+## `depends_on`
 
 The AI can plan in steps, for example "move the study session to 9 PM, then work on the
-assignment 6:30–9 PM in its old time". The second suggestion lists the first in `depends_on`:
-it's only valid if the first is accepted too. The check endpoint reports this in `accept_first`.
-
-## What the AI service reads and writes in Supabase
-
-It uses the team's planned schema (meeting notes, and the frontend's `mockData.js`):
-
-| Table | Columns the AI uses |
-|---|---|
-| `users` | `user_id`, `timezone` (e.g. `America/Detroit`) |
-| `calendar_events` | `event_id`, `user_id`, `name`, `start_date`, `start_time`, `end_date`, `end_time`, `changeable` (times are local to the user's time zone) |
-| `tasks` | `task_id`, `user_id`, `name`, `description`, `date`, `status`, `changeable` |
-| `ai_suggestions` | everything in the suggestion above (it inserts rows and reads them) |
-
-Proposed `ai_suggestions` table (for the backend team to review):
-
-```sql
-create table ai_suggestions (
-  suggestion_id bigint generated always as identity primary key,
-  user_id uuid not null default auth.uid() references auth.users (id),
-  type text not null check (type in ('CREATE_EVENT', 'MOVE_EVENT')),
-  target_id bigint references calendar_events (event_id),
-  description text not null default '',
-  proposed_change jsonb not null,
-  depends_on jsonb not null default '[]',
-  status text not null default 'PENDING' check (status in ('PENDING', 'ACCEPTED', 'DECLINED', 'EXPIRED')),
-  created_at timestamptz not null default now(),
-  expires_at timestamptz
-);
-
-alter table ai_suggestions enable row level security;
-create policy "users see and add only their own suggestions" on ai_suggestions
-  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
-```
-
-The other tables need the same kind of policy (`user_id = auth.uid()`). The AI service uses the
-project's **anon key plus the user's token**, never the service-role key.
+assignment 6:30–9 PM in its old time". The second suggestion lists the first in `depends_on`;
+Accept refuses it until the first is accepted.
 
 ## Not done yet
 
 - **Recurring events** (`recurrence_rule`) are read as single events.
-- **Streaming**: replies arrive all at once.
-- **The midnight overview** (`AIOverview` on the frontend: `succeeded`, `missed`, `suggestion`,
-  `motivation`) is Phase 2.
-- Supabase mode is tested against a fake Supabase API (`tests/test_supabase_store.py`), not a
-  real project yet, because the backend tables don't exist yet.
+- **Old pending suggestions** keep their time blocked for new proposals until they're
+  answered or their time passes. The team should decide when to mark them `EXPIRED`.
+- **Streaming**: replies arrive all at once (30 s to several minutes on a laptop).
+- **The midnight overview** (`AIOverview`: `succeeded`, `missed`, `suggestion`, `motivation`)
+  is Phase 2; the frontend still shows mock text there.

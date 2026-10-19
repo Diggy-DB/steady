@@ -1,3 +1,8 @@
 node_modules
 dist
 .DS_Store
+# environment files with keys (Vite reads .env.local)
+.env
+.env.*
+!.env.example
+*.local

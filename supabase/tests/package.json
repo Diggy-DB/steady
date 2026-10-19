@@ -1,0 +1,12 @@
+{
+  "name": "steady-planner-db-tests",
+  "private": true,
+  "type": "module",
+  "description": "Tests the database migration in a throwaway Postgres (PGlite) that mimics Supabase. No Docker, no live database.",
+  "scripts": {
+    "test": "node test_migration.mjs ../migrations/*.sql"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.10"
+  }
+}
