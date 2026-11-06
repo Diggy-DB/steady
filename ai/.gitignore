@@ -12,3 +12,9 @@ __pycache__/
 
 # training data: can get large; keep it on a RunPod volume or a private Hugging Face dataset
 data/
+
+# long-term memory database: personal data learned from chats and journals
+memory/
+
+# fine-tuned adapters and training results (deploy/runpod_train.sh)
+out/

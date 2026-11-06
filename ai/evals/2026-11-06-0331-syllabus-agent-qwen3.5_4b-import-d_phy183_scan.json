@@ -1,0 +1,281 @@
+{
+  "args": {
+    "model": "qwen3.5:4b",
+    "design": "import",
+    "ocr": null,
+    "syllabus": "d_phy183_scan.pdf",
+    "route": "text",
+    "base_url": "http://localhost:11434/v1",
+    "no_think": true
+  },
+  "score": {
+    "items": 11,
+    "found": 11,
+    "returned": 11,
+    "made_up": 0,
+    "timed": 11,
+    "right_time": 11,
+    "meetings": 2,
+    "meetings_right": 2,
+    "missed": [],
+    "extra": []
+  },
+  "rounds": 2,
+  "tool_calls": [
+    "import_syllabus"
+  ],
+  "errors": 0,
+  "tokens": 80,
+  "seconds": 51,
+  "answer": "I suggest adding 11 dated items and 2 weekly classes from your PHY 183 syllabus. Two midterm dates were pulled from the class schedule and need verification. Please review these suggestions before I propose them to your calendar.",
+  "suggestions": [
+    {
+      "suggestion_id": "s1",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus (time taken from the class schedule)",
+      "proposed_change": {
+        "name": "PHY 183 Midterm 1",
+        "start": "2027-02-22T11:30:00-05:00",
+        "end": "2027-02-22T12:20:00-05:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-22T11:30:00-05:00"
+    },
+    {
+      "suggestion_id": "s2",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus (time taken from the class schedule)",
+      "proposed_change": {
+        "name": "PHY 183 Midterm 2",
+        "start": "2027-04-05T11:30:00-04:00",
+        "end": "2027-04-05T12:20:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-05T11:30:00-04:00"
+    },
+    {
+      "suggestion_id": "s3",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Lab practical",
+        "start": "2027-04-22T15:00:00-04:00",
+        "end": "2027-04-22T16:50:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-22T15:00:00-04:00"
+    },
+    {
+      "suggestion_id": "s4",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Final exam",
+        "start": "2027-05-06T15:00:00-04:00",
+        "end": "2027-05-06T17:00:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-05-06T15:00:00-04:00"
+    },
+    {
+      "suggestion_id": "s5",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Problem set 1",
+        "start": "2027-01-20T11:30:00-05:00",
+        "end": "2027-01-20T11:30:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-01-20T11:30:00-05:00"
+    },
+    {
+      "suggestion_id": "s6",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Problem set 2",
+        "start": "2027-02-03T11:30:00-05:00",
+        "end": "2027-02-03T11:30:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-03T11:30:00-05:00"
+    },
+    {
+      "suggestion_id": "s7",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Problem set 3",
+        "start": "2027-02-17T11:30:00-05:00",
+        "end": "2027-02-17T11:30:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-17T11:30:00-05:00"
+    },
+    {
+      "suggestion_id": "s8",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Problem set 4",
+        "start": "2027-03-03T11:30:00-05:00",
+        "end": "2027-03-03T11:30:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-03T11:30:00-05:00"
+    },
+    {
+      "suggestion_id": "s9",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Problem set 5",
+        "start": "2027-03-24T11:30:00-04:00",
+        "end": "2027-03-24T11:30:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-24T11:30:00-04:00"
+    },
+    {
+      "suggestion_id": "s10",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Problem set 6",
+        "start": "2027-04-07T11:30:00-04:00",
+        "end": "2027-04-07T11:30:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-07T11:30:00-04:00"
+    },
+    {
+      "suggestion_id": "s11",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Problem set 7",
+        "start": "2027-04-21T11:30:00-04:00",
+        "end": "2027-04-21T11:30:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-21T11:30:00-04:00"
+    },
+    {
+      "suggestion_id": "s12",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "Weekly class from your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Lecture",
+        "start": "2027-01-11T11:30:00-05:00",
+        "end": "2027-01-11T12:20:00-05:00",
+        "recurrence_rule": "FREQ=WEEKLY;BYDAY=MO,WE,FR;UNTIL=20270529",
+        "days": [
+          "Mon",
+          "Wed",
+          "Fri"
+        ],
+        "skip_dates": [
+          "2027-03-08",
+          "2027-03-10",
+          "2027-03-12"
+        ]
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-05-29T23:59:59.999999-04:00"
+    },
+    {
+      "suggestion_id": "s13",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "Weekly class from your syllabus",
+      "proposed_change": {
+        "name": "PHY 183 Lab",
+        "start": "2027-01-14T15:00:00-05:00",
+        "end": "2027-01-14T16:50:00-05:00",
+        "recurrence_rule": "FREQ=WEEKLY;BYDAY=TH;UNTIL=20270529",
+        "days": [
+          "Thu"
+        ],
+        "skip_dates": [
+          "2027-03-11"
+        ]
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-05-29T23:59:59.999999-04:00"
+    }
+  ]
+}

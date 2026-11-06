@@ -138,3 +138,26 @@ def test_an_event_can_only_have_one_pending_move():
     propose_move_event(ctx, "e6", "2026-10-07 16:00", "2026-10-07 18:00", "")
     with pytest.raises(ToolError, match="already has a pending move"):
         propose_move_event(ctx, "e6", "2026-10-07 18:00", "2026-10-07 20:00", "")
+
+
+def test_proposing_mentions_similar_events_already_planned_that_week():
+    ctx = context()
+    # Tuesday already has "Gym" 6-7 PM; "Gym session" is similar ("session" is a generic word).
+    result = propose_new_event(ctx, "Gym session", "2026-10-07 12:30", "2026-10-07 13:30", "")
+    assert "Already planned this week" in result["summary"] and "Gym (Tuesday, October 6" in result["summary"]
+    # A second one also lists the first suggestion.
+    second = propose_new_event(ctx, "Gym", "2026-10-09 17:00", "2026-10-09 18:00", "")
+    assert "pending suggestion s1: Gym session" in second["summary"]
+
+
+def test_no_note_for_unrelated_events():
+    result = propose_new_event(context(), "Work on MTH 133 problem set", "2026-10-07 18:00", "2026-10-07 21:00", "")
+    assert "Already planned" not in result["summary"]
+
+
+def test_events_already_over_dont_count():
+    # On Wednesday evening, Monday's and Wednesday's study sessions are over; Friday's is still ahead.
+    late = ToolContext(store=FixtureStore(), user_id="user-1", now=datetime(2026, 10, 7, 18, 0, tzinfo=DETROIT))
+    result = propose_new_event(late, "Study session", "2026-10-08 20:00", "2026-10-08 21:00", "")
+    assert "Friday, October 9" in result["summary"]
+    assert "Monday, October 5" not in result["summary"] and "Wednesday, October 7" not in result["summary"]

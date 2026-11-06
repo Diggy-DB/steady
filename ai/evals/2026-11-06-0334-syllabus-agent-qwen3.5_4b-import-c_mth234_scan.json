@@ -1,0 +1,368 @@
+{
+  "args": {
+    "model": "qwen3.5:4b",
+    "design": "import",
+    "ocr": null,
+    "syllabus": "c_mth234_scan.pdf",
+    "route": "text",
+    "base_url": "http://localhost:11434/v1",
+    "no_think": true
+  },
+  "score": {
+    "items": 17,
+    "found": 17,
+    "returned": 17,
+    "made_up": 0,
+    "timed": 17,
+    "right_time": 17,
+    "meetings": 1,
+    "meetings_right": 1,
+    "missed": [],
+    "extra": []
+  },
+  "rounds": 2,
+  "tool_calls": [
+    "import_syllabus"
+  ],
+  "errors": 0,
+  "tokens": 69,
+  "seconds": 42,
+  "answer": "I've imported your MTH 234 syllabus with 17 due dates/exams and one weekly class. Please review the suggestions before I add them to your calendar.",
+  "suggestions": [
+    {
+      "suggestion_id": "s1",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 1",
+        "start": "2027-01-19T23:59:00-05:00",
+        "end": "2027-01-19T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-01-19T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s2",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 2",
+        "start": "2027-01-26T23:59:00-05:00",
+        "end": "2027-01-26T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-01-26T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s3",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 3",
+        "start": "2027-02-02T23:59:00-05:00",
+        "end": "2027-02-02T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-02T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s4",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 4",
+        "start": "2027-02-09T23:59:00-05:00",
+        "end": "2027-02-09T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-09T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s5",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 5",
+        "start": "2027-02-16T23:59:00-05:00",
+        "end": "2027-02-16T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-16T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s6",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 6",
+        "start": "2027-02-23T23:59:00-05:00",
+        "end": "2027-02-23T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-23T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s7",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 7",
+        "start": "2027-03-02T23:59:00-05:00",
+        "end": "2027-03-02T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-02T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s8",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 Exam 1",
+        "start": "2027-02-11T19:00:00-05:00",
+        "end": "2027-02-11T20:20:00-05:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-11T19:00:00-05:00"
+    },
+    {
+      "suggestion_id": "s9",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 8",
+        "start": "2027-03-16T23:59:00-04:00",
+        "end": "2027-03-16T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-16T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s10",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 9",
+        "start": "2027-03-23T23:59:00-04:00",
+        "end": "2027-03-23T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-23T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s11",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 Exam 2",
+        "start": "2027-03-25T19:00:00-04:00",
+        "end": "2027-03-25T20:20:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-25T19:00:00-04:00"
+    },
+    {
+      "suggestion_id": "s12",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 10",
+        "start": "2027-03-30T23:59:00-04:00",
+        "end": "2027-03-30T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-30T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s13",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 11",
+        "start": "2027-04-06T23:59:00-04:00",
+        "end": "2027-04-06T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-06T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s14",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 12",
+        "start": "2027-04-13T23:59:00-04:00",
+        "end": "2027-04-13T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-13T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s15",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 13",
+        "start": "2027-04-20T23:59:00-04:00",
+        "end": "2027-04-20T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-20T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s16",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 WebWork 14",
+        "start": "2027-04-27T23:59:00-04:00",
+        "end": "2027-04-27T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-27T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s17",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 Final Exam",
+        "start": "2027-05-05T12:45:00-04:00",
+        "end": "2027-05-05T14:45:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-05-05T12:45:00-04:00"
+    },
+    {
+      "suggestion_id": "s18",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "Weekly class from your syllabus",
+      "proposed_change": {
+        "name": "MTH 234 Lecture",
+        "start": "2027-01-11T10:20:00-05:00",
+        "end": "2027-01-11T11:10:00-05:00",
+        "recurrence_rule": "FREQ=WEEKLY;BYDAY=MO,TU,WE,FR;UNTIL=20270430",
+        "days": [
+          "Mon",
+          "Tue",
+          "Wed",
+          "Fri"
+        ],
+        "skip_dates": [
+          "2027-03-08",
+          "2027-03-09",
+          "2027-03-10",
+          "2027-03-12"
+        ]
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-30T23:59:59.999999-04:00"
+    }
+  ]
+}

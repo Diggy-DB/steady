@@ -1,0 +1,406 @@
+{
+  "args": {
+    "model": "qwen3.5:4b",
+    "design": "import",
+    "ocr": null,
+    "syllabus": "b_bs161_scan.pdf",
+    "route": "text",
+    "base_url": "http://localhost:11434/v1",
+    "no_think": true
+  },
+  "score": {
+    "items": 18,
+    "found": 8,
+    "returned": 18,
+    "made_up": 10,
+    "timed": 8,
+    "right_time": 8,
+    "meetings": 1,
+    "meetings_right": 1,
+    "missed": [
+      "Online Quiz 1 2027-01-17",
+      "Online Quiz 2 2027-01-24",
+      "Online Quiz 3 2027-01-31",
+      "Online Quiz 4 2027-02-07",
+      "Online Quiz 5 2027-02-21",
+      "Online Quiz 6 2027-02-28",
+      "Online Quiz 7 2027-03-21",
+      "Online Quiz 8 2027-03-28",
+      "Online Quiz 9 2027-04-04",
+      "Online Quiz 10 2027-04-11"
+    ],
+    "extra": [
+      "BS 161 Online quizzes (weekly) 1 2027-01-17",
+      "BS 161 Online quizzes (weekly) 2 2027-01-24",
+      "BS 161 Online quizzes (weekly) 3 2027-01-31",
+      "BS 161 Online quizzes (weekly) 4 2027-02-07",
+      "BS 161 Online quizzes (weekly) 5 2027-02-21",
+      "BS 161 Online quizzes (weekly) 6 2027-02-28",
+      "BS 161 Online quizzes (weekly) 7 2027-03-21",
+      "BS 161 Online quizzes (weekly) 8 2027-03-28",
+      "BS 161 Online quizzes (weekly) 9 2027-04-04",
+      "BS 161 Online quizzes (weekly) 10 2027-04-11"
+    ]
+  },
+  "rounds": 2,
+  "tool_calls": [
+    "import_syllabus"
+  ],
+  "errors": 0,
+  "tokens": 60,
+  "seconds": 60,
+  "answer": "I suggest adding 18 dated events and 1 weekly class from your syllabus to your calendar. Please review these items before accepting.",
+  "suggestions": [
+    {
+      "suggestion_id": "s1",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Exam 1",
+        "start": "2027-02-10T09:10:00-05:00",
+        "end": "2027-02-10T10:00:00-05:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-10T09:10:00-05:00"
+    },
+    {
+      "suggestion_id": "s2",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Exam 2",
+        "start": "2027-03-17T09:10:00-04:00",
+        "end": "2027-03-17T10:00:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-17T09:10:00-04:00"
+    },
+    {
+      "suggestion_id": "s3",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Exam 3",
+        "start": "2027-04-14T09:10:00-04:00",
+        "end": "2027-04-14T10:00:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-14T09:10:00-04:00"
+    },
+    {
+      "suggestion_id": "s4",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Final exam",
+        "start": "2027-05-03T07:45:00-04:00",
+        "end": "2027-05-03T09:45:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-05-03T07:45:00-04:00"
+    },
+    {
+      "suggestion_id": "s5",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 1",
+        "start": "2027-01-17T23:59:00-05:00",
+        "end": "2027-01-17T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-01-17T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s6",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 2",
+        "start": "2027-01-24T23:59:00-05:00",
+        "end": "2027-01-24T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-01-24T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s7",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 3",
+        "start": "2027-01-31T23:59:00-05:00",
+        "end": "2027-01-31T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-01-31T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s8",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 4",
+        "start": "2027-02-07T23:59:00-05:00",
+        "end": "2027-02-07T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-07T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s9",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 5",
+        "start": "2027-02-21T23:59:00-05:00",
+        "end": "2027-02-21T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-21T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s10",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 6",
+        "start": "2027-02-28T23:59:00-05:00",
+        "end": "2027-02-28T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-28T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s11",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 7",
+        "start": "2027-03-21T23:59:00-04:00",
+        "end": "2027-03-21T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-21T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s12",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 8",
+        "start": "2027-03-28T23:59:00-04:00",
+        "end": "2027-03-28T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-28T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s13",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 9",
+        "start": "2027-04-04T23:59:00-04:00",
+        "end": "2027-04-04T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-04T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s14",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Online quizzes (weekly) 10",
+        "start": "2027-04-11T23:59:00-04:00",
+        "end": "2027-04-11T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-11T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s15",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Research paper - Topic proposal",
+        "start": "2027-01-29T17:00:00-05:00",
+        "end": "2027-01-29T17:00:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-01-29T17:00:00-05:00"
+    },
+    {
+      "suggestion_id": "s16",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Research paper - Annotated bibliography",
+        "start": "2027-02-26T17:00:00-05:00",
+        "end": "2027-02-26T17:00:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-26T17:00:00-05:00"
+    },
+    {
+      "suggestion_id": "s17",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Group presentation",
+        "start": "2027-04-26T09:10:00-04:00",
+        "end": "2027-04-26T10:00:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-26T09:10:00-04:00"
+    },
+    {
+      "suggestion_id": "s18",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Research paper - Final paper (2,000 words)",
+        "start": "2027-04-23T17:00:00-04:00",
+        "end": "2027-04-23T17:00:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-23T17:00:00-04:00"
+    },
+    {
+      "suggestion_id": "s19",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "Weekly class from your syllabus",
+      "proposed_change": {
+        "name": "BS 161 Lecture",
+        "start": "2027-01-11T09:10:00-05:00",
+        "end": "2027-01-11T10:00:00-05:00",
+        "recurrence_rule": "FREQ=WEEKLY;BYDAY=MO,WE,FR;UNTIL=20270430",
+        "days": [
+          "Mon",
+          "Wed",
+          "Fri"
+        ],
+        "skip_dates": [
+          "2027-03-08",
+          "2027-03-10",
+          "2027-03-12"
+        ]
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-30T23:59:59.999999-04:00"
+    }
+  ]
+}

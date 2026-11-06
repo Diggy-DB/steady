@@ -5,6 +5,10 @@
     POST /suggestions/{id}/check        re-run the checks (what Accept does first)
     POST /suggestions/{id}/accept       check again, apply the change, mark it ACCEPTED, log it
     POST /suggestions/{id}/decline      mark it DECLINED, log it
+    GET  /memories                      what Steady remembers about the user (long-term memory)
+    DELETE /memories/{id}               forget one memory
+    POST /memories/journal/{id}         learn from a saved journal entry (in the background)
+    DELETE /memories/journal/{id}       forget what one journal entry taught
     GET  /health
 
 Two modes, chosen with the STORE environment variable:
@@ -26,13 +30,14 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import openai
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from ai.agent import run_agent
 from ai.llm import load_settings, make_client
+from ai.memory import UserMemory, build_user_memory
 from ai.planning import recheck
 from ai.schedule import FixtureStore, ToolContext
 from ai.supabase_store import SupabaseStore
@@ -54,6 +59,15 @@ app.add_middleware(
     CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["Authorization", "Content-Type", "X-User-Id"]
 )
 demo_store = FixtureStore()  # one shared copy, so suggestions survive between requests in demo mode
+
+# Long-term memory (memory.py). MEMORY=off turns it off. If it can't start (for example, the
+# embedding model isn't downloaded), the app still works, just without memory.
+memory: UserMemory | None = None
+if os.getenv("MEMORY", "on") != "off":
+    try:
+        memory = build_user_memory(settings)
+    except Exception as error:  # any start-up problem means "run without memory"
+        print(f"Long-term memory is off: {error}")
 
 
 # Turn failures of the services we depend on into clear JSON errors. An unhandled crash would also
@@ -87,6 +101,7 @@ class ChatResponse(BaseModel):
     reply: str
     suggestions: list[dict]  # suggestions created while answering, for Accept / Decline cards
     run_id: str
+    memories_used: list[str] = []  # remembered facts the answer could use
 
 
 def context(
@@ -129,16 +144,38 @@ def find_suggestion(ctx: ToolContext, suggestion_id: str) -> dict:
 
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "store": STORE, "model": settings.model}
+    return {"ok": True, "store": STORE, "model": settings.model, "memory": memory is not None}
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, ctx: ToolContext = Depends(context)) -> ChatResponse:
+def chat(request: ChatRequest, background: BackgroundTasks, ctx: ToolContext = Depends(context)) -> ChatResponse:
     before = {s["suggestion_id"] for s in ctx.store.suggestions(ctx.user_id)}
     history = [turn.model_dump() for turn in request.history]
-    result = run_agent(llm, settings.model, ctx, request.message, verbose=False, history=history)
+    memories = recall(ctx.user_id, request.message)
+    result = run_agent(llm, settings.model, ctx, request.message, verbose=False, history=history, memories=memories)
     new = [s for s in ctx.store.suggestions(ctx.user_id) if s["suggestion_id"] not in before]
-    return ChatResponse(reply=result["answer"], suggestions=new, run_id=result["run_id"])
+    if memory:  # learn from this turn after the reply has been sent, so the user doesn't wait for it
+        background.add_task(learn, memory.remember_chat, ctx.user_id, request.message, result["answer"])
+    return ChatResponse(reply=result["answer"], suggestions=new, run_id=result["run_id"], memories_used=memories)
+
+
+def recall(user_id: str, message: str) -> list[str]:
+    """Remembered facts related to the message. Memory trouble never stops the chat."""
+    if not memory:
+        return []
+    try:
+        return memory.recall(user_id, message)
+    except Exception as error:
+        print(f"Memory recall failed: {error}")
+        return []
+
+
+def learn(action, *args) -> None:
+    """Run a memory update in the background, and log (not raise) any failure."""
+    try:
+        action(*args)
+    except Exception as error:
+        print(f"Memory update failed: {error}")
 
 
 @app.get("/suggestions")
@@ -181,3 +218,38 @@ def decline(suggestion_id: str, ctx: ToolContext = Depends(context)) -> dict:
     ctx.store.set_status(suggestion_id, "DECLINED")
     ctx.store.log(ctx.user_id, "SUGGESTION_DECLINED", "ai_suggestion", suggestion_id, "USER", {"type": suggestion["type"]})
     return {"suggestion_id": suggestion_id, "status": "DECLINED"}
+
+
+def require_memory() -> UserMemory:
+    if memory is None:
+        raise HTTPException(503, "long-term memory is off")
+    return memory
+
+
+@app.get("/memories")
+def list_memories(ctx: ToolContext = Depends(context)) -> list[dict]:
+    return require_memory().list(ctx.user_id)
+
+
+@app.delete("/memories/{memory_id}")
+def delete_memory(memory_id: str, ctx: ToolContext = Depends(context)) -> dict:
+    if not require_memory().delete(ctx.user_id, memory_id):
+        raise HTTPException(404, f"no memory {memory_id}")
+    return {"deleted": memory_id}
+
+
+@app.post("/memories/journal/{journal_id}")
+def learn_from_journal(journal_id: str, background: BackgroundTasks, ctx: ToolContext = Depends(context)) -> dict:
+    """Called by the frontend after a journal entry is saved. Learning happens in the background."""
+    mem = require_memory()
+    journal = ctx.store.journal(ctx.user_id, journal_id)  # read with the user's own token
+    if journal is None:
+        raise HTTPException(404, f"no journal entry {journal_id}")
+    background.add_task(learn, mem.remember_journal, ctx.user_id, journal)
+    return {"journal_id": journal_id, "status": "learning"}
+
+
+@app.delete("/memories/journal/{journal_id}")
+def forget_journal(journal_id: str, ctx: ToolContext = Depends(context)) -> dict:
+    """Called by the frontend after a journal entry is deleted."""
+    return {"journal_id": journal_id, "forgotten": require_memory().forget_journal(ctx.user_id, journal_id)}

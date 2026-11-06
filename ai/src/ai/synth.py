@@ -182,9 +182,13 @@ def activity_today(rng: random.Random, ctx: ToolContext):
 def weekly_goal(rng: random.Random, ctx: ToolContext):
     name = rng.choice(list(ACTIVITIES))
     phrase, word = ACTIVITIES[name]
-    week_end = date.fromisoformat(ctx.store.data["events"][0]["start"][:10]) + timedelta(days=6)
+    week_start = date.fromisoformat(ctx.store.data["events"][0]["start"][:10])
+    week_end = week_start + timedelta(days=6)
+    # Sessions earlier this week count too ("run 3 times this week" after running this morning: 2 more),
+    # the same rule the eval cases use; counting only upcoming ones taught the opposite.
     already = sum(
-        1 for e in ctx.store.data["events"] if e["name"] == name and datetime.fromisoformat(e["start"]) > ctx.now
+        1 for e in ctx.store.data["events"]
+        if e["name"] == name and week_start <= datetime.fromisoformat(e["start"]).date() <= week_end
     )
     free_days = sum(
         1 for offset in range((week_end - ctx.now.date()).days + 1)

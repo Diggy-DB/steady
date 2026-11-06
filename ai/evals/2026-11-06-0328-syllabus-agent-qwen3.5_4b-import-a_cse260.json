@@ -1,0 +1,371 @@
+{
+  "args": {
+    "model": "qwen3.5:4b",
+    "design": "import",
+    "ocr": null,
+    "syllabus": "a_cse260.pdf",
+    "route": "text",
+    "base_url": "http://localhost:11434/v1",
+    "no_think": true
+  },
+  "score": {
+    "items": 17,
+    "found": 16,
+    "returned": 16,
+    "made_up": 0,
+    "timed": 16,
+    "right_time": 16,
+    "meetings": 2,
+    "meetings_right": 2,
+    "missed": [
+      "Homework 7 2027-03-19"
+    ],
+    "extra": []
+  },
+  "rounds": 2,
+  "tool_calls": [
+    "import_syllabus"
+  ],
+  "errors": 0,
+  "tokens": 118,
+  "seconds": 49,
+  "answer": "I've imported your CSE 260 syllabus and found 16 dated items plus two weekly classes. I noticed several dates need checking against your class schedule\u2014Quiz 1, both midterms, and Quizzes 3 and 4 might have timing conflicts since they overlap with other course requirements. Please review the suggestions to see if any of those dates are incorrect or missing deadlines you should add to your calendar.",
+  "suggestions": [
+    {
+      "suggestion_id": "s1",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Homework 1",
+        "start": "2027-01-22T23:59:00-05:00",
+        "end": "2027-01-22T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-01-22T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s2",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Homework 2",
+        "start": "2027-01-29T23:59:00-05:00",
+        "end": "2027-01-29T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-01-29T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s3",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Homework 3",
+        "start": "2027-02-05T23:59:00-05:00",
+        "end": "2027-02-05T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-05T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s4",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus (time taken from the class schedule)",
+      "proposed_change": {
+        "name": "CSE 260 Quiz 1",
+        "start": "2027-02-03T15:00:00-05:00",
+        "end": "2027-02-03T15:50:00-05:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-03T15:00:00-05:00"
+    },
+    {
+      "suggestion_id": "s5",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Homework 4",
+        "start": "2027-02-12T23:59:00-05:00",
+        "end": "2027-02-12T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-12T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s6",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus (time taken from the class schedule)",
+      "proposed_change": {
+        "name": "CSE 260 Midterm Exam 1",
+        "start": "2027-02-18T12:40:00-05:00",
+        "end": "2027-02-18T14:00:00-05:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-18T12:40:00-05:00"
+    },
+    {
+      "suggestion_id": "s7",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Homework 5",
+        "start": "2027-02-26T23:59:00-05:00",
+        "end": "2027-02-26T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-02-26T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s8",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Homework 6",
+        "start": "2027-03-05T23:59:00-05:00",
+        "end": "2027-03-05T23:59:00-05:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-05T23:59:00-05:00"
+    },
+    {
+      "suggestion_id": "s9",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus (time taken from the class schedule)",
+      "proposed_change": {
+        "name": "CSE 260 Quiz 2",
+        "start": "2027-03-03T15:00:00-05:00",
+        "end": "2027-03-03T15:50:00-05:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-03T15:00:00-05:00"
+    },
+    {
+      "suggestion_id": "s10",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus (time taken from the class schedule)",
+      "proposed_change": {
+        "name": "CSE 260 Midterm Exam 2",
+        "start": "2027-03-25T12:40:00-04:00",
+        "end": "2027-03-25T14:00:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-25T12:40:00-04:00"
+    },
+    {
+      "suggestion_id": "s11",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Homework 8",
+        "start": "2027-04-02T23:59:00-04:00",
+        "end": "2027-04-02T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-02T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s12",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus (time taken from the class schedule)",
+      "proposed_change": {
+        "name": "CSE 260 Quiz 3",
+        "start": "2027-03-31T15:00:00-04:00",
+        "end": "2027-03-31T15:50:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-03-31T15:00:00-04:00"
+    },
+    {
+      "suggestion_id": "s13",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Homework 9",
+        "start": "2027-04-09T23:59:00-04:00",
+        "end": "2027-04-09T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-09T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s14",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Homework 10",
+        "start": "2027-04-23T23:59:00-04:00",
+        "end": "2027-04-23T23:59:00-04:00",
+        "kind": "deadline",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-23T23:59:00-04:00"
+    },
+    {
+      "suggestion_id": "s15",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus (time taken from the class schedule)",
+      "proposed_change": {
+        "name": "CSE 260 Quiz 4",
+        "start": "2027-04-21T15:00:00-04:00",
+        "end": "2027-04-21T15:50:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-21T15:00:00-04:00"
+    },
+    {
+      "suggestion_id": "s16",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "From your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Final Exam",
+        "start": "2027-05-04T10:00:00-04:00",
+        "end": "2027-05-04T12:00:00-04:00",
+        "kind": "event",
+        "needs_check": false
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-05-04T10:00:00-04:00"
+    },
+    {
+      "suggestion_id": "s17",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "Weekly class from your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Lecture",
+        "start": "2027-01-12T12:40:00-05:00",
+        "end": "2027-01-12T14:00:00-05:00",
+        "recurrence_rule": "FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20270430",
+        "days": [
+          "Tue",
+          "Thu"
+        ],
+        "skip_dates": [
+          "2027-03-09",
+          "2027-03-11"
+        ]
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-30T23:59:59.999999-04:00"
+    },
+    {
+      "suggestion_id": "s18",
+      "user_id": "user-1",
+      "status": "PENDING",
+      "type": "CREATE_EVENT",
+      "target_id": null,
+      "description": "Weekly class from your syllabus",
+      "proposed_change": {
+        "name": "CSE 260 Recitation",
+        "start": "2027-01-13T15:00:00-05:00",
+        "end": "2027-01-13T15:50:00-05:00",
+        "recurrence_rule": "FREQ=WEEKLY;BYDAY=WE;UNTIL=20270430",
+        "days": [
+          "Wed"
+        ],
+        "skip_dates": [
+          "2027-03-10"
+        ]
+      },
+      "depends_on": [],
+      "created_at": "2026-12-15T10:00:00-05:00",
+      "expires_at": "2027-04-30T23:59:59.999999-04:00"
+    }
+  ]
+}

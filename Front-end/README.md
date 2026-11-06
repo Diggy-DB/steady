@@ -23,4 +23,5 @@ The AI service must be running for the chat (`cd ../ai && uv run uvicorn ai.serv
 | `src/lib/ai.js` | calls to the AI service (chat, accept, decline) |
 | `src/components/AuthForm.jsx` | sign in / sign up (Supabase Auth) |
 | `src/components/ChatWidget.jsx` | the chat, with Accept / Decline cards for suggestions |
+| `src/components/MemoryPanel.jsx` | "What Steady remembers": the user's long-term memories, with Forget |
 | `src/data/mockData.js` | only the AI overview still uses mock data (the nightly overview isn't built yet) |

@@ -244,3 +244,10 @@ button.link {
   font-style: italic;
   color: #555;
 }
+
+/* Journal entry box */
+.add-event textarea {
+  min-height: 120px;
+  padding: 6px;
+  font-family: inherit;
+}

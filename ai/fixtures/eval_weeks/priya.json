@@ -1,0 +1,141 @@
+{
+  "users": [
+    {
+      "user_id": "user-1",
+      "first_name": "Priya",
+      "timezone": "Asia/Kolkata"
+    },
+    {
+      "user_id": "user-2",
+      "first_name": "Other",
+      "timezone": "America/Detroit"
+    }
+  ],
+  "events": [
+    {
+      "event_id": "p1",
+      "user_id": "user-1",
+      "name": "Study session",
+      "start": "2026-12-07T10:00:00+05:30",
+      "end": "2026-12-07T12:00:00+05:30",
+      "changeable": true
+    },
+    {
+      "event_id": "p2",
+      "user_id": "user-1",
+      "name": "Study session",
+      "start": "2026-12-08T10:00:00+05:30",
+      "end": "2026-12-08T12:00:00+05:30",
+      "changeable": true
+    },
+    {
+      "event_id": "p3",
+      "user_id": "user-1",
+      "name": "Study session",
+      "start": "2026-12-09T10:00:00+05:30",
+      "end": "2026-12-09T12:00:00+05:30",
+      "changeable": true
+    },
+    {
+      "event_id": "p4",
+      "user_id": "user-1",
+      "name": "Study session",
+      "start": "2026-12-10T10:00:00+05:30",
+      "end": "2026-12-10T12:00:00+05:30",
+      "changeable": true
+    },
+    {
+      "event_id": "p5",
+      "user_id": "user-1",
+      "name": "Study session",
+      "start": "2026-12-11T10:00:00+05:30",
+      "end": "2026-12-11T12:00:00+05:30",
+      "changeable": true
+    },
+    {
+      "event_id": "p6",
+      "user_id": "user-1",
+      "name": "Study session",
+      "start": "2026-12-12T10:00:00+05:30",
+      "end": "2026-12-12T12:00:00+05:30",
+      "changeable": true
+    },
+    {
+      "event_id": "p10",
+      "user_id": "user-1",
+      "name": "Remote work",
+      "start": "2026-12-07T15:00:00+05:30",
+      "end": "2026-12-07T18:00:00+05:30",
+      "changeable": false
+    },
+    {
+      "event_id": "p11",
+      "user_id": "user-1",
+      "name": "Remote work",
+      "start": "2026-12-09T15:00:00+05:30",
+      "end": "2026-12-09T18:00:00+05:30",
+      "changeable": false
+    },
+    {
+      "event_id": "p12",
+      "user_id": "user-1",
+      "name": "CSE 331 final exam",
+      "start": "2026-12-08T19:45:00+05:30",
+      "end": "2026-12-08T21:45:00+05:30",
+      "changeable": false
+    },
+    {
+      "event_id": "p13",
+      "user_id": "user-1",
+      "name": "MTH 309 final exam",
+      "start": "2026-12-10T12:45:00+05:30",
+      "end": "2026-12-10T14:45:00+05:30",
+      "changeable": false
+    },
+    {
+      "event_id": "p14",
+      "user_id": "user-1",
+      "name": "Call with family",
+      "start": "2026-12-13T09:00:00+05:30",
+      "end": "2026-12-13T10:00:00+05:30",
+      "changeable": true
+    },
+    {
+      "event_id": "x1",
+      "user_id": "user-2",
+      "name": "CSE 331 final exam",
+      "start": "2026-12-08T19:45:00+05:30",
+      "end": "2026-12-08T21:45:00+05:30",
+      "changeable": false
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "pt1",
+      "user_id": "user-1",
+      "name": "CSE 331 final review",
+      "description": "About 4 hours of work.",
+      "due": "2026-12-08",
+      "status": "NOT_STARTED",
+      "changeable": true
+    },
+    {
+      "task_id": "pt2",
+      "user_id": "user-1",
+      "name": "MTH 309 practice exam",
+      "description": "About 2 hours of work.",
+      "due": "2026-12-10",
+      "status": "NOT_STARTED",
+      "changeable": true
+    },
+    {
+      "task_id": "pt3",
+      "user_id": "user-1",
+      "name": "Pack for winter break",
+      "description": "About 1 hour of work.",
+      "due": "2026-12-12",
+      "status": "NOT_STARTED",
+      "changeable": true
+    }
+  ]
+}

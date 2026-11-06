@@ -91,6 +91,16 @@ Re-runs every check against the calendar as it is now:
 
 Marks it `DECLINED` and writes an `activity_log` entry.
 
+## Long-term memory (see notes/memory.md)
+
+- `POST /chat` also returns `memories_used`: the remembered facts the answer could use.
+- `GET /memories`: what Steady remembers about the user (`id`, `memory`, `source`: chat or journal).
+- `DELETE /memories/{id}`: forget one memory (only the user's own).
+- `POST /memories/journal/{journal_id}`: learn from a saved journal entry (in the background).
+- `DELETE /memories/journal/{journal_id}`: forget what that entry taught.
+
+When memory is off (`MEMORY=off`), the memory endpoints return 503 and chat works without it.
+
 ## `depends_on`
 
 The AI can plan in steps, for example "move the study session to 9 PM, then work on the

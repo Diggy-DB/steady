@@ -64,6 +64,13 @@ class FixtureStore:
             if t["user_id"] == user_id and first_day <= date.fromisoformat(t["due"]) <= last_day
         ]
 
+    def journal(self, user_id: str, journal_id: str) -> dict | None:
+        """One of this user's journal entries by id, or None (the fake week has none unless a test adds them)."""
+        for j in self.data.get("journals", []):
+            if j["user_id"] == user_id and str(j["journal_id"]) == str(journal_id):
+                return j
+        return None
+
     def suggestions(self, user_id: str, status: str | None = None) -> list[dict]:
         """This user's suggestions, optionally only those with one status (e.g. "PENDING")."""
         return [s for s in self._suggestions if s["user_id"] == user_id and status in (None, s["status"])]
@@ -158,13 +165,21 @@ GET_SCHEDULE_TOOL = {
 }
 
 
+def too_many_days(first_day: date) -> str:
+    """The error for a too-long date range, with a range that works, because a small model often
+    can't work one out by itself (it retried 15- and 25-day ranges until it ran out of rounds)."""
+    last = first_day + timedelta(days=MAX_DAYS - 1)
+    return (f"ask for at most {MAX_DAYS} days at a time, e.g. start_date {first_day.isoformat()} and "
+            f"end_date {last.isoformat()}; call again for the next {MAX_DAYS} days if you need them")
+
+
 def get_schedule(ctx: ToolContext, start_date: str, end_date: str) -> dict:
     first_day = parse_day(start_date, "start_date")
     last_day = parse_day(end_date, "end_date")
     if last_day < first_day:
         raise ToolError("end_date is before start_date")
     if (last_day - first_day).days >= MAX_DAYS:
-        raise ToolError(f"ask for at most {MAX_DAYS} days at a time")
+        raise ToolError(too_many_days(first_day))
 
     tz = ZoneInfo(ctx.store.user(ctx.user_id)["timezone"])
     now = ctx.now.astimezone(tz)

@@ -1,0 +1,89 @@
+{
+  "label": "qwen3.5:4b",
+  "args": {
+    "model": "qwen3.5:4b",
+    "ocr": null,
+    "runs": 3,
+    "base_url": "http://localhost:11434/v1",
+    "only": [
+      "b_bs161_scan.pdf"
+    ]
+  },
+  "total": {
+    "items": 54,
+    "found": 54,
+    "made_up": 0,
+    "timed": 54,
+    "right_time": 54,
+    "meetings": 3,
+    "meetings_right": 3,
+    "flagged": 0,
+    "useful_flags": 0,
+    "seconds": 120.1
+  },
+  "results": [
+    {
+      "file": "b_bs161_scan.pdf",
+      "run": 1,
+      "items": 18,
+      "found": 18,
+      "returned": 18,
+      "made_up": 0,
+      "timed": 18,
+      "right_time": 18,
+      "meetings": 1,
+      "meetings_right": 1,
+      "missed": [],
+      "extra": [],
+      "read_as": "vision",
+      "seconds": 54.5,
+      "flagged": 0,
+      "useful_flags": 0,
+      "fixes": [],
+      "left_out": [],
+      "error": null
+    },
+    {
+      "file": "b_bs161_scan.pdf",
+      "run": 2,
+      "items": 18,
+      "found": 18,
+      "returned": 18,
+      "made_up": 0,
+      "timed": 18,
+      "right_time": 18,
+      "meetings": 1,
+      "meetings_right": 1,
+      "missed": [],
+      "extra": [],
+      "read_as": "vision",
+      "seconds": 38.0,
+      "flagged": 0,
+      "useful_flags": 0,
+      "fixes": [],
+      "left_out": [],
+      "error": null
+    },
+    {
+      "file": "b_bs161_scan.pdf",
+      "run": 3,
+      "items": 18,
+      "found": 18,
+      "returned": 18,
+      "made_up": 0,
+      "timed": 18,
+      "right_time": 18,
+      "meetings": 1,
+      "meetings_right": 1,
+      "missed": [],
+      "extra": [],
+      "read_as": "vision",
+      "seconds": 27.6,
+      "flagged": 0,
+      "useful_flags": 0,
+      "fixes": [],
+      "left_out": [],
+      "error": null
+    }
+  ]
+}

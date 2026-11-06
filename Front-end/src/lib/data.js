@@ -38,3 +38,28 @@ export async function addEvent(event) {
 export async function deleteEvent(eventId) {
   check(await supabase.from("calendar_events").delete().eq("event_id", eventId));
 }
+
+export async function addTask(task) {
+  return check(await supabase.from("tasks").insert(task).select().single());
+}
+
+export async function updateTask(taskId, changes) {
+  return check(await supabase.from("tasks").update(changes).eq("task_id", taskId).select().single());
+}
+
+export async function deleteTask(taskId) {
+  check(await supabase.from("tasks").delete().eq("task_id", taskId));
+}
+
+// One journal entry per day (the database enforces it): edit the day's entry if it
+// exists, otherwise create it.
+export async function saveJournal(date, information, journalId) {
+  const query = journalId
+    ? supabase.from("journals").update({ information }).eq("journal_id", journalId)
+    : supabase.from("journals").insert({ date, information });
+  return check(await query.select().single());
+}
+
+export async function deleteJournal(journalId) {
+  check(await supabase.from("journals").delete().eq("journal_id", journalId));
+}

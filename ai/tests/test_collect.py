@@ -46,3 +46,59 @@ def test_example_renders_with_qwens_chat_template():
     ex = example()
     text = tokenizer.apply_chat_template(ex["messages"], tools=ex["tools"], tokenize=False)
     assert "<tool_call>" in text and "<tool_response>" in text and text.rstrip().endswith("<|im_end|>")
+
+
+
+def reminded_run(later_thinking: str) -> dict:
+    from ai.agent import NUDGE
+
+    return {
+        "messages": [
+            {"role": "system", "content": "rules"},
+            {"role": "user", "content": "When can I go to the gym?"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1"}], "reasoning_content": "look up"},
+            {"role": "tool", "tool_call_id": "c1", "content": "{}"},
+            {"role": "assistant", "content": "You could go at 12 PM."},  # described, didn't propose
+            {"role": "system", "content": NUDGE},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c2"}], "reasoning_content": later_thinking},
+            {"role": "tool", "tool_call_id": "c2", "content": "{}"},
+        ],
+        "answer": "I suggest the gym at 12 PM.",
+        "reasoning": "Done.",
+    }
+
+
+def test_reminder_is_cut_out():
+    cut = collect_traces.without_reminder(reminded_run("Propose the gym slot at noon."))
+    roles = [m["role"] for m in cut["messages"]]
+    assert roles == ["system", "user", "assistant", "tool", "assistant", "tool"]
+    assert "You could go at 12 PM." not in [m["content"] for m in cut["messages"]]
+
+
+def test_run_whose_thinking_mentions_the_reminder_is_skipped():
+    assert collect_traces.without_reminder(reminded_run("The system reminded me to create suggestions.")) is None
+
+
+def test_collection_runs_tasks_in_parallel_and_keeps_only_passing_runs(monkeypatch, tmp_path, capsys):
+    class LazyModel:  # answers without ever using a tool, so every task fails its checks
+        base_url = "http://fake"
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**request):
+                    return reply("I'm not sure.")
+
+    monkeypatch.setattr(collect_traces, "make_client", lambda settings: LazyModel)
+    monkeypatch.setattr(collect_traces, "AI_DIR", tmp_path)
+    monkeypatch.setattr(collect_traces, "COLLECT_LOG", tmp_path / "collect.jsonl")
+    monkeypatch.setattr("sys.argv", ["collect_traces.py", "--tasks", "6", "--samples", "2", "--workers", "3"])
+    collect_traces.main()
+
+    printed = capsys.readouterr().out
+    assert printed.count("0/2 tries passed") == 6
+    assert not list((tmp_path / "data").glob("*.jsonl"))  # nothing passed, so nothing was kept
+
+
+def test_time_limit_stops_starting_new_tasks():
+    assert collect_traces.try_task(None, "fake", seed=1, samples=1, deadline=1.0) is None  # 1970: long past

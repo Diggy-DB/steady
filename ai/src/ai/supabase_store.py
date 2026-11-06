@@ -89,6 +89,10 @@ class SupabaseStore:
             for row in rows
         ]
 
+    def journal(self, user_id: str, journal_id: str) -> dict | None:
+        rows = self._get("journals", [("user_id", f"eq.{user_id}"), ("journal_id", f"eq.{journal_id}")])
+        return rows[0] if rows else None
+
     def suggestions(self, user_id: str, status: str | None = None) -> list[dict]:
         params = [("user_id", f"eq.{user_id}"), ("order", "created_at.asc")]
         if status:

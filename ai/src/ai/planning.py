@@ -13,7 +13,7 @@ move in `depends_on` (it only works if the user accepts the move too).
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from ai.schedule import MAX_DAYS, ToolContext, ToolError, format_day, format_time, overlaps, parse_day
+from ai.schedule import MAX_DAYS, ToolContext, ToolError, format_day, format_time, overlaps, parse_day, too_many_days
 
 # Free time is only looked for between these hours. Later this comes from the user's preferences.
 DAY_START = time(8, 0)
@@ -164,7 +164,7 @@ def find_free_slots(ctx: ToolContext, start_date: str, end_date: str, minutes: i
     if last_day < first_day:
         raise ToolError("end_date is before start_date")
     if (last_day - first_day).days >= MAX_DAYS:
-        raise ToolError(f"ask for at most {MAX_DAYS} days at a time")
+        raise ToolError(too_many_days(first_day))
     if not isinstance(minutes, int) or not 15 <= minutes <= 12 * 60:
         raise ToolError("minutes must be a whole number from 15 to 720")
 
@@ -179,6 +179,41 @@ def find_free_slots(ctx: ToolContext, start_date: str, end_date: str, minutes: i
         day += timedelta(days=1)
     now = ctx.now.astimezone(user_timezone(ctx))
     return {"now": f"{now:%Y-%m-%d %H:%M}", "minutes": minutes, "days": days}
+
+
+# Words that say nothing about what an event is ("Work on ...", "... session").
+GENERIC_WORDS = {"a", "an", "and", "block", "event", "for", "my", "of", "on", "session", "sessions", "the", "time", "to", "work"}
+
+
+def key_words(name: str) -> set[str]:
+    words = {w.strip(".,:;!?()").lower() for w in name.split()}
+    return {w for w in words if w and w not in GENERIC_WORDS}
+
+
+def similar_this_week(ctx: ToolContext, name: str, start: datetime) -> list[str]:
+    """Events (not over yet) and pending suggestions in the same Monday-Sunday week with a similar name.
+
+    Small models forget to count what's already planned ("gym 3 times" when one gym session
+    exists), so the propose tool tells them right when it matters.
+    """
+    words = key_words(name)
+    if not words:
+        return []
+    tz = start.tzinfo
+    monday = datetime.combine((start - timedelta(days=start.weekday())).date(), time.min, tzinfo=tz)
+    week_end = monday + timedelta(days=7)
+    found = [
+        f"{e['name']} ({describe_range(datetime.fromisoformat(e['start']).astimezone(tz), datetime.fromisoformat(e['end']).astimezone(tz))})"
+        for e in ctx.store.events(ctx.user_id, monday, week_end)
+        if key_words(e["name"]) & words and datetime.fromisoformat(e["end"]) > ctx.now
+    ]
+    for s in ctx.store.suggestions(ctx.user_id, status="PENDING"):
+        change = s["proposed_change"]
+        s_start = datetime.fromisoformat(change["start"]).astimezone(tz)
+        if s["type"] == "CREATE_EVENT" and monday <= s_start < week_end and key_words(change["name"]) & words:
+            s_end = datetime.fromisoformat(change["end"]).astimezone(tz)
+            found.append(f"your pending suggestion {s['suggestion_id']}: {change['name']} ({describe_range(s_start, s_end)})")
+    return found
 
 
 def dependency_note(depends_on: list[str]) -> str:
@@ -216,6 +251,7 @@ def propose_new_event(ctx: ToolContext, name: str, start: str, end: str, reason:
     start_at = parse_local(start, "start", tz)
     end_at = parse_local(end, "end", tz)
     depends_on = check_time(ctx, start_at, end_at)
+    similar = similar_this_week(ctx, name, start_at)  # before adding, so it doesn't list itself
 
     suggestion = ctx.store.add_suggestion(
         ctx.user_id,
@@ -233,8 +269,17 @@ def propose_new_event(ctx: ToolContext, name: str, start: str, end: str, reason:
         "suggestion_id": suggestion["suggestion_id"],
         "status": "PENDING",
         "summary": f"Suggested new event '{name.strip()}' on {describe_range(start_at, end_at)}. "
-        "Nothing changes until the user accepts it." + dependency_note(depends_on),
+        "Nothing changes until the user accepts it." + dependency_note(depends_on) + similar_note(similar),
     }
+
+
+def similar_note(similar: list[str]) -> str:
+    if not similar:
+        return ""
+    return (
+        " Already planned this week with a similar name: " + "; ".join(similar)
+        + ". Count these toward the user's goal before suggesting more."
+    )
 
 
 PROPOSE_MOVE_EVENT_TOOL = {

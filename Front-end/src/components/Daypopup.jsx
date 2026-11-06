@@ -6,12 +6,31 @@ const statusLabels = {
   COMPLETED: "Completed",
 };
 
-function DayPopup({ date, events: allEvents, tasks: allTasks = [], journals: allJournals = [], onAddEvent, onDeleteEvent, onClose }) {
+function DayPopup({
+  date,
+  events: allEvents,
+  tasks: allTasks = [],
+  journals: allJournals = [],
+  onAddEvent,
+  onDeleteEvent,
+  onAddTask,
+  onUpdateTask,
+  onDeleteTask,
+  onSaveJournal,
+  onDeleteJournal,
+  onClose,
+}) {
   const [activeTab, setActiveTab] = useState("calendar");
   const [name, setName] = useState("");
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("10:00");
   const [isFixed, setIsFixed] = useState(false);
+  const [taskName, setTaskName] = useState("");
+  const [taskDescription, setTaskDescription] = useState("");
+  const [journalText, setJournalText] = useState(
+    () => allJournals.find((j) => j.date === date)?.information ?? "",
+  );
+  const [journalSaved, setJournalSaved] = useState(false);
 
   const events = allEvents.filter((e) => e.start_date === date);
   const tasks = allTasks.filter((t) => t.date === date);
@@ -30,6 +49,32 @@ function handleAdd() {
   });
   setName("");
 }
+
+  function handleAddTask() {
+    if (taskName.trim() === "") return;
+    onAddTask({
+      name: taskName,
+      description: taskDescription,
+      date: date,
+      status: "NOT_STARTED",
+      changeable: true,
+      created_by: "USER",
+    });
+    setTaskName("");
+    setTaskDescription("");
+  }
+
+  async function handleSaveJournal() {
+    if (journalText.trim() === "") return;
+    const ok = await onSaveJournal(date, journalText, journal?.journal_id);
+    setJournalSaved(ok);
+  }
+
+  function handleDeleteJournal() {
+    onDeleteJournal(journal.journal_id);
+    setJournalText("");
+    setJournalSaved(false);
+  }
   return (
     <div className="popup-overlay" onClick={onClose}>
       <div className="popup" onClick={(e) => e.stopPropagation()}>
@@ -79,15 +124,25 @@ function handleAdd() {
               <div key={task.task_id} className="item">
                 <strong>{task.name}</strong>
                 <p>{task.description}</p>
-                <p>{statusLabels[task.status]}</p>
+                <select
+                  value={task.status}
+                  onChange={(e) => onUpdateTask(task.task_id, { status: e.target.value })}
+                >
+                  {Object.entries(statusLabels).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+                <button onClick={() => onDeleteTask(task.task_id)}>Delete</button>
               </div>
             ))}
+            {addTaskForm()}
           </div>
         )}
 
         {activeTab === "journal" && (
           <div>
-            {journal ? <p>{journal.information}</p> : <p>No journal entry yet.</p>}
+            {!journal && <p>No journal entry yet.</p>}
+            {journalForm()}
           </div>
         )}
       </div>
@@ -111,6 +166,37 @@ function handleAdd() {
         Fixed (AI can't move it)
       </label>
       <button onClick={handleAdd}>Add</button>
+    </div>;
+  }
+
+  function addTaskForm() {
+    return <div className="add-event">
+      <h3>Add task</h3>
+      <input
+        value={taskName}
+        onChange={(e) => setTaskName(e.target.value)}
+        placeholder="Task name" />
+      <input
+        value={taskDescription}
+        onChange={(e) => setTaskDescription(e.target.value)}
+        placeholder="Details (e.g. About 3 hours of work)" />
+      <button onClick={handleAddTask}>Add</button>
+    </div>;
+  }
+
+  function journalForm() {
+    return <div className="add-event">
+      <h3>{journal ? "Edit entry" : "Write entry"}</h3>
+      <textarea
+        value={journalText}
+        onChange={(e) => {
+          setJournalText(e.target.value);
+          setJournalSaved(false);
+        }}
+        placeholder="How did today go?" />
+      <button onClick={handleSaveJournal}>Save</button>
+      {journalSaved && <p>Saved ✓</p>}
+      {journal && <button onClick={handleDeleteJournal}>Delete</button>}
     </div>;
   }
 }

@@ -4,9 +4,21 @@ import MonthCalendar from "./components/MonthCalendar";
 import AIOverview from "./components/AIOverview";
 import ChatWidget from "./components/ChatWidget";
 import AuthForm from "./components/AuthForm";
+import MemoryPanel from "./components/MemoryPanel";
+import { ai } from "./lib/ai";
 import { mockAIOverview } from "./data/mockData";
 import { supabase } from "./lib/supabase";
-import { addEvent, dateString, deleteEvent, loadMonth } from "./lib/data";
+import {
+  addEvent,
+  addTask,
+  dateString,
+  deleteEvent,
+  deleteJournal,
+  deleteTask,
+  loadMonth,
+  saveJournal,
+  updateTask,
+} from "./lib/data";
 
 function App() {
   const today = new Date();
@@ -15,6 +27,7 @@ function App() {
   const [data, setData] = useState({ events: [], tasks: [], journals: [] });
   const [error, setError] = useState("");
   const [selectedDate, setSelectedDate] = useState(null);
+  const [showMemories, setShowMemories] = useState(false);
 
   // Keep track of who is signed in.
   useEffect(() => {
@@ -55,6 +68,55 @@ function App() {
     }
   }
 
+  async function handleAddTask(newTask) {
+    try {
+      const saved = await addTask(newTask);
+      setData((d) => ({ ...d, tasks: [...d.tasks, saved] }));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleUpdateTask(id, changes) {
+    try {
+      const saved = await updateTask(id, changes);
+      setData((d) => ({ ...d, tasks: d.tasks.map((t) => (t.task_id === id ? saved : t)) }));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleDeleteTask(id) {
+    try {
+      await deleteTask(id);
+      setData((d) => ({ ...d, tasks: d.tasks.filter((t) => t.task_id !== id) }));
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleSaveJournal(date, information, journalId) {
+    try {
+      const saved = await saveJournal(date, information, journalId);
+      setData((d) => ({ ...d, journals: [...d.journals.filter((j) => j.journal_id !== saved.journal_id), saved] }));
+      ai.rememberJournal(saved.journal_id).catch(() => {}); // let Steady learn from it, in the background
+      return true;
+    } catch (err) {
+      setError(err.message);
+      return false;
+    }
+  }
+
+  async function handleDeleteJournal(id) {
+    try {
+      await deleteJournal(id);
+      setData((d) => ({ ...d, journals: d.journals.filter((j) => j.journal_id !== id) }));
+      ai.forgetJournal(id).catch(() => {}); // and forget what it taught
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
   function changeMonth(step) {
     setShown(({ year, month }) => {
       const first = new Date(year, month + step, 1);
@@ -77,7 +139,11 @@ function App() {
     <div>
       <div className="app-header">
         <h1>Steady Planner</h1>
-        <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
+        <div>
+          <button className="link" onClick={() => setShowMemories(true)}>What Steady remembers</button>
+          {" · "}
+          <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
+        </div>
       </div>
       {error && <p className="error">{error}</p>}
       <AIOverview overview={mockAIOverview} />
@@ -98,9 +164,15 @@ function App() {
           journals={data.journals}
           onDeleteEvent={handleDeleteEvent}
           onAddEvent={handleAddEvent}
+          onAddTask={handleAddTask}
+          onUpdateTask={handleUpdateTask}
+          onDeleteTask={handleDeleteTask}
+          onSaveJournal={handleSaveJournal}
+          onDeleteJournal={handleDeleteJournal}
           onClose={() => setSelectedDate(null)}
         />
       )}
+      {showMemories && <MemoryPanel onClose={() => setShowMemories(false)} />}
       <ChatWidget events={data.events} onCalendarChanged={reload} />
     </div>
   );

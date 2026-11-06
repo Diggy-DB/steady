@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from openai.types.chat import ChatCompletion
 
-from ai.agent import MAX_ROUNDS, run_agent, run_tool
+from ai.agent import MAX_ROUNDS, run_agent, run_tool, tool_calls_in_thinking
 from ai.schedule import FixtureStore, ToolContext
 
 NOW = datetime(2026, 10, 5, 18, 30, tzinfo=ZoneInfo("America/Detroit"))
@@ -20,9 +20,11 @@ def context() -> ToolContext:
     return ToolContext(store=FixtureStore(), user_id="user-1", now=NOW)
 
 
-def reply(content: str = "", tool_calls: list[tuple[str, dict | str]] = ()) -> ChatCompletion:
+def reply(content: str = "", tool_calls: list[tuple[str, dict | str]] = (), reasoning: str = "") -> ChatCompletion:
     """Build a response exactly like the OpenAI library would return it."""
     message = {"role": "assistant", "content": content}
+    if reasoning:
+        message["reasoning_content"] = reasoning  # how vLLM sends the thinking
     if tool_calls:
         message["tool_calls"] = [
             {
@@ -138,3 +140,55 @@ def test_no_reminder_for_plain_questions(logged):
     client = FakeClient([reply(tool_calls=[("get_schedule", TUESDAY)]), reply("Work 1-5 PM, gym 6-7 PM.")])
     result = run_agent(client, "fake", context(), "What do I have tomorrow?", verbose=False)
     assert not result["nudged"] and result["rounds"] == 2
+
+
+def call_text(name: str, arguments: dict) -> str:
+    return "<tool_call>\n" + json.dumps({"name": name, "arguments": arguments}) + "\n</tool_call>"
+
+
+def test_tool_calls_written_inside_unclosed_thinking_are_used(logged):
+    # The model never wrote </think>, so the server sent everything as thinking: no calls, no answer.
+    thinking = "I should look up Tuesday.\n\n" + call_text("get_schedule", TUESDAY) + "\n\nYou work 1-5 PM."
+    client = FakeClient([reply(reasoning=thinking), reply("You work 1-5 PM.")])
+    result = run_agent(client, "fake", context(), "What do I have tomorrow?", verbose=False)
+
+    assert (result["answer"], result["rounds"]) == ("You work 1-5 PM.", 2)
+    *_, call_message, tool_message = client.requests[1]["messages"]
+    assert call_message["tool_calls"][0]["function"]["name"] == "get_schedule"
+    assert call_message["reasoning_content"] == "I should look up Tuesday."  # the call is cut out of the thinking
+    assert "Work shift" in tool_message["content"]
+    assert logged[0]["tool_calls_from_thinking"] and "<tool_call>" in logged[0]["reasoning"]  # the log keeps the raw text
+
+
+def test_drafts_in_thinking_are_ignored_when_the_model_answered(logged):
+    thinking = "Maybe " + call_text("get_schedule", TUESDAY) + " but I already know."
+    client = FakeClient([reply("Work 1-5 PM.", reasoning=thinking)])
+    result = run_agent(client, "fake", context(), "What do I have tomorrow?", verbose=False)
+    assert (result["answer"], result["rounds"]) == ("Work 1-5 PM.", 1)
+    assert not logged[0]["tool_calls_from_thinking"]
+
+
+def test_only_the_last_group_of_calls_counts():
+    draft = call_text("get_schedule", TUESDAY)
+    gym = {"name": "Gym", "start": "2026-10-07 12:00", "end": "2026-10-07 13:00", "reason": "Free."}
+    thinking = f"First idea: {draft}\nNo, better:\n{call_text('propose_new_event', gym)}\n{call_text('propose_new_event', gym)}\nDone."
+    before, calls = tool_calls_in_thinking(thinking)
+    assert [c["function"]["name"] for c in calls] == ["propose_new_event", "propose_new_event"]
+    assert json.loads(calls[0]["function"]["arguments"]) == gym
+    assert before.endswith("No, better:") and len({c["id"] for c in calls}) == 2
+
+
+def test_no_calls_from_thinking_without_valid_blocks():
+    assert tool_calls_in_thinking("Just thinking.") == ("Just thinking.", [])
+    broken = "<tool_call>\n{not json}\n</tool_call>"
+    assert tool_calls_in_thinking(broken) == (broken, [])
+
+
+def test_a_repeated_failing_call_is_refused(logged):
+    too_long = {"start_date": "2027-01-11", "end_date": "2027-05-07"}
+    client = FakeClient([reply(tool_calls=[("get_schedule", too_long)]), reply(tool_calls=[("get_schedule", too_long)]),
+                         reply("I couldn't look that far ahead.")])
+    result = run_agent(client, "fake", context(), "What's on my calendar this semester?", verbose=False)
+    first, second = [m["content"] for m in result["messages"] if m["role"] == "tool"]
+    assert "e.g. start_date 2027-01-11 and end_date 2027-01-24" in first  # the error says what to ask instead
+    assert second.startswith("Error: you already made exactly this call")

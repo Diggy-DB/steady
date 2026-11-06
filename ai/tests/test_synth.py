@@ -3,9 +3,11 @@
 from collections import Counter
 from datetime import date, datetime
 
+from ai.eval_generated import GEN_WEEKS, GENERATED
+from ai.eval_suite import SUITE, WEEKS
 from ai.evals import SCENARIOS
 from ai.schedule import overlaps
-from ai.synth import EVAL_WEEK, make_task
+from ai.synth import make_task
 
 TASKS = [make_task(seed) for seed in range(200)]
 
@@ -15,15 +17,16 @@ def test_same_seed_gives_the_same_task():
     assert (a.question, a.now, a.data) == (b.question, b.now, b.data)
 
 
-def test_never_uses_the_eval_week():
-    eval_days = {date.fromordinal(EVAL_WEEK.toordinal() + i) for i in range(7)}
+def test_never_uses_an_eval_week():
+    # every day that has an event in any of the five eval weeks, plus the days around them
+    eval_days = {date.fromisoformat(e["start"][:10]) for week in [*WEEKS.values(), *GEN_WEEKS.values()] for e in week["events"]}
     for task in TASKS:
         days = {date.fromisoformat(e["start"][:10]) for e in task.data["events"]}
         assert not days & eval_days, task.name
 
 
 def test_never_asks_an_eval_question():
-    eval_questions = {s.question.lower() for s in SCENARIOS}
+    eval_questions = {s.question.lower() for s in [*SCENARIOS, *SUITE, *GENERATED]}
     assert not {t.question.lower() for t in TASKS} & eval_questions
 
 

@@ -21,8 +21,9 @@ Browser (Front-end/, React)
 ## Running everything locally
 
 1. **Database**: the schema in `supabase/migrations/` must be applied to the Supabase project once.
-2. **Model** (for the AI): `OLLAMA_CONTEXT_LENGTH=32768 ollama serve` (see `ai/README.md`), or a
-   RunPod server (`ai/notes/stage4_runpod.md`).
+2. **Models** (for the AI): `OLLAMA_CONTEXT_LENGTH=32768 ollama serve`, plus once
+   `ollama pull qwen3:4b-thinking-2507-q8_0` and `ollama pull nomic-embed-text` (see `ai/README.md`),
+   or a RunPod server for the chat model (`ai/notes/stage4_runpod.md`).
 3. **AI service**: in `ai/.env` set `STORE=supabase` (with `SUPABASE_URL` and `SUPABASE_ANON_KEY`), then
 
    ```bash

@@ -1,0 +1,663 @@
+{
+  "label": "qwen3.5:9b ocr",
+  "args": {
+    "model": "qwen3.5:9b",
+    "route": "ocr",
+    "ocr_model": "glm-ocr:q8_0",
+    "think": false,
+    "constrained": false,
+    "temperature": null,
+    "dpi": 150,
+    "only": null
+  },
+  "total": {
+    "items": 63,
+    "found": 63,
+    "made_up": 0,
+    "timed": 63,
+    "right_time": 57,
+    "meetings": 6,
+    "meetings_right": 4,
+    "seconds": 362.2
+  },
+  "results": [
+    {
+      "file": "a_cse260.pdf",
+      "items": 17,
+      "found": 17,
+      "returned": 17,
+      "made_up": 0,
+      "timed": 17,
+      "right_time": 11,
+      "meetings": 2,
+      "meetings_right": 0,
+      "missed": [],
+      "extra": [],
+      "seconds": 104.3,
+      "prompt_tokens": 1530,
+      "output_tokens": 1319,
+      "ocr_seconds": 33.7,
+      "answer": {
+        "course": "Discrete Mathematics",
+        "term_start": "2027-01-11",
+        "term_end": "2027-04-30",
+        "meetings": [
+          {
+            "kind": "lecture",
+            "days": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri"
+            ],
+            "start": "09:00",
+            "end": "10:00",
+            "location": null
+          },
+          {
+            "kind": "recitation",
+            "days": [
+              "Wed"
+            ],
+            "start": "10:00",
+            "end": "10:50",
+            "location": null
+          }
+        ],
+        "no_class": [
+          {
+            "start": "2027-03-08",
+            "end": "2027-03-12",
+            "reason": "spring break"
+          }
+        ],
+        "items": [
+          {
+            "title": "Homework 1",
+            "kind": "assignment",
+            "date": "2027-01-22",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 1",
+            "kind": "quiz",
+            "date": "2027-02-03",
+            "time": "10:00",
+            "end_time": "10:50"
+          },
+          {
+            "title": "Homework 2",
+            "kind": "assignment",
+            "date": "2027-01-29",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Homework 3",
+            "kind": "assignment",
+            "date": "2027-02-05",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Midterm 1",
+            "kind": "exam",
+            "date": "2027-02-18",
+            "time": "09:00",
+            "end_time": "10:00"
+          },
+          {
+            "title": "Homework 4",
+            "kind": "assignment",
+            "date": "2027-02-12",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Homework 5",
+            "kind": "assignment",
+            "date": "2027-02-26",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Homework 6",
+            "kind": "assignment",
+            "date": "2027-03-05",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 2",
+            "kind": "quiz",
+            "date": "2027-03-03",
+            "time": "10:00",
+            "end_time": "10:50"
+          },
+          {
+            "title": "Homework 7",
+            "kind": "assignment",
+            "date": "2027-03-19",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Midterm 2",
+            "kind": "exam",
+            "date": "2027-03-25",
+            "time": "09:00",
+            "end_time": "10:00"
+          },
+          {
+            "title": "Homework 8",
+            "kind": "assignment",
+            "date": "2027-04-02",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 3",
+            "kind": "quiz",
+            "date": "2027-03-31",
+            "time": "10:00",
+            "end_time": "10:50"
+          },
+          {
+            "title": "Homework 9",
+            "kind": "assignment",
+            "date": "2027-04-09",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Homework 10",
+            "kind": "assignment",
+            "date": "2027-04-23",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 4",
+            "kind": "quiz",
+            "date": "2027-04-21",
+            "time": "10:00",
+            "end_time": "10:50"
+          },
+          {
+            "title": "Final Exam",
+            "kind": "exam",
+            "date": "2027-05-04",
+            "time": "10:00",
+            "end_time": "12:00"
+          }
+        ]
+      }
+    },
+    {
+      "file": "b_bs161.pdf",
+      "items": 18,
+      "found": 18,
+      "returned": 18,
+      "made_up": 0,
+      "timed": 18,
+      "right_time": 18,
+      "meetings": 1,
+      "meetings_right": 1,
+      "missed": [],
+      "extra": [],
+      "seconds": 103.6,
+      "prompt_tokens": 1436,
+      "output_tokens": 1302,
+      "ocr_seconds": 32.4,
+      "answer": {
+        "course": "BS 161",
+        "term_start": "2027-01-11",
+        "term_end": "2027-05-03",
+        "meetings": [
+          {
+            "kind": "lecture",
+            "days": [
+              "Mon",
+              "Wed",
+              "Fri"
+            ],
+            "start": "09:10",
+            "end": "10:00",
+            "location": "100 Natural Science"
+          }
+        ],
+        "no_class": [
+          {
+            "start": "2027-03-08",
+            "end": "2027-03-12",
+            "reason": "spring break"
+          }
+        ],
+        "items": [
+          {
+            "title": "Topic Proposal",
+            "kind": "assignment",
+            "date": "2027-01-29",
+            "time": "17:00",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 1",
+            "kind": "quiz",
+            "date": "2027-01-17",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 2",
+            "kind": "quiz",
+            "date": "2027-01-24",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 3",
+            "kind": "quiz",
+            "date": "2027-01-31",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Exam 1",
+            "kind": "exam",
+            "date": "2027-02-10",
+            "time": "09:10",
+            "end_time": "10:00"
+          },
+          {
+            "title": "Quiz 4",
+            "kind": "quiz",
+            "date": "2027-02-07",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 5",
+            "kind": "quiz",
+            "date": "2027-02-21",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Annotated Bibliography",
+            "kind": "assignment",
+            "date": "2027-02-26",
+            "time": "17:00",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 6",
+            "kind": "quiz",
+            "date": "2027-02-28",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Exam 2",
+            "kind": "exam",
+            "date": "2027-03-17",
+            "time": "09:10",
+            "end_time": "10:00"
+          },
+          {
+            "title": "Quiz 7",
+            "kind": "quiz",
+            "date": "2027-03-21",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 8",
+            "kind": "quiz",
+            "date": "2027-03-28",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Group Presentation",
+            "kind": "presentation",
+            "date": "2027-04-26",
+            "time": "09:10",
+            "end_time": "10:00"
+          },
+          {
+            "title": "Quiz 9",
+            "kind": "quiz",
+            "date": "2027-04-04",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Quiz 10",
+            "kind": "quiz",
+            "date": "2027-04-11",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Exam 3",
+            "kind": "exam",
+            "date": "2027-04-14",
+            "time": "09:10",
+            "end_time": "10:00"
+          },
+          {
+            "title": "Final Paper",
+            "kind": "assignment",
+            "date": "2027-04-23",
+            "time": "17:00",
+            "end_time": null
+          },
+          {
+            "title": "Final Exam",
+            "kind": "exam",
+            "date": "2027-05-03",
+            "time": "07:45",
+            "end_time": "09:45"
+          }
+        ]
+      }
+    },
+    {
+      "file": "c_mth234_photo.jpg",
+      "items": 17,
+      "found": 17,
+      "returned": 17,
+      "made_up": 0,
+      "timed": 17,
+      "right_time": 17,
+      "meetings": 1,
+      "meetings_right": 1,
+      "missed": [],
+      "extra": [],
+      "seconds": 80.2,
+      "prompt_tokens": 1127,
+      "output_tokens": 1255,
+      "ocr_seconds": 13.6,
+      "answer": {
+        "course": "MTH 234",
+        "term_start": "2027-01-11",
+        "term_end": "2027-04-30",
+        "meetings": [
+          {
+            "kind": "lecture",
+            "days": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Fri"
+            ],
+            "start": "10:20",
+            "end": "11:10",
+            "location": "C304 Wells Hall"
+          }
+        ],
+        "no_class": [
+          {
+            "start": "2027-03-08",
+            "end": "2027-03-12",
+            "reason": "spring break"
+          }
+        ],
+        "items": [
+          {
+            "title": "WebWork 1",
+            "kind": "assignment",
+            "date": "2027-01-19",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 2",
+            "kind": "assignment",
+            "date": "2027-01-26",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 3",
+            "kind": "assignment",
+            "date": "2027-02-02",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Exam 1",
+            "kind": "exam",
+            "date": "2027-02-11",
+            "time": "19:00",
+            "end_time": "20:20"
+          },
+          {
+            "title": "WebWork 4",
+            "kind": "assignment",
+            "date": "2027-02-09",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 5",
+            "kind": "assignment",
+            "date": "2027-02-16",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 6",
+            "kind": "assignment",
+            "date": "2027-02-23",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 7",
+            "kind": "assignment",
+            "date": "2027-03-02",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 8",
+            "kind": "assignment",
+            "date": "2027-03-16",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Exam 2",
+            "kind": "exam",
+            "date": "2027-03-25",
+            "time": "19:00",
+            "end_time": "20:20"
+          },
+          {
+            "title": "WebWork 9",
+            "kind": "assignment",
+            "date": "2027-03-23",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 10",
+            "kind": "assignment",
+            "date": "2027-03-30",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 11",
+            "kind": "assignment",
+            "date": "2027-04-06",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 12",
+            "kind": "assignment",
+            "date": "2027-04-13",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 13",
+            "kind": "assignment",
+            "date": "2027-04-20",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "WebWork 14",
+            "kind": "assignment",
+            "date": "2027-04-27",
+            "time": "23:59",
+            "end_time": null
+          },
+          {
+            "title": "Final Exam",
+            "kind": "exam",
+            "date": "2027-05-05",
+            "time": "12:45",
+            "end_time": "14:45"
+          }
+        ]
+      }
+    },
+    {
+      "file": "d_phy183_scan.pdf",
+      "items": 11,
+      "found": 11,
+      "returned": 11,
+      "made_up": 0,
+      "timed": 11,
+      "right_time": 11,
+      "meetings": 2,
+      "meetings_right": 2,
+      "missed": [],
+      "extra": [],
+      "seconds": 74.1,
+      "prompt_tokens": 1052,
+      "output_tokens": 964,
+      "ocr_seconds": 22.0,
+      "answer": {
+        "course": "PHY 183",
+        "term_start": "2027-01-11",
+        "term_end": "2027-05-20",
+        "meetings": [
+          {
+            "kind": "lecture",
+            "days": [
+              "Mon",
+              "Wed",
+              "Fri"
+            ],
+            "start": "11:30",
+            "end": "12:20",
+            "location": "1415 Biomedical & Physical Sciences"
+          },
+          {
+            "kind": "lab",
+            "days": [
+              "Thu"
+            ],
+            "start": "15:00",
+            "end": "16:50",
+            "location": "1248 BPS"
+          }
+        ],
+        "no_class": [
+          {
+            "start": "2027-03-08",
+            "end": "2027-03-12",
+            "reason": "spring break"
+          }
+        ],
+        "items": [
+          {
+            "title": "Problem Set 1",
+            "kind": "assignment",
+            "date": "2027-01-20",
+            "time": "11:30",
+            "end_time": null
+          },
+          {
+            "title": "Problem Set 2",
+            "kind": "assignment",
+            "date": "2027-02-03",
+            "time": "11:30",
+            "end_time": null
+          },
+          {
+            "title": "Midterm 1",
+            "kind": "exam",
+            "date": "2027-02-22",
+            "time": "11:30",
+            "end_time": "12:20"
+          },
+          {
+            "title": "Problem Set 3",
+            "kind": "assignment",
+            "date": "2027-02-17",
+            "time": "11:30",
+            "end_time": null
+          },
+          {
+            "title": "Problem Set 4",
+            "kind": "assignment",
+            "date": "2027-03-03",
+            "time": "11:30",
+            "end_time": null
+          },
+          {
+            "title": "Problem Set 5",
+            "kind": "assignment",
+            "date": "2027-03-24",
+            "time": "11:30",
+            "end_time": null
+          },
+          {
+            "title": "Problem Set 6",
+            "kind": "assignment",
+            "date": "2027-04-07",
+            "time": "11:30",
+            "end_time": null
+          },
+          {
+            "title": "Midterm 2",
+            "kind": "exam",
+            "date": "2027-04-05",
+            "time": "11:30",
+            "end_time": "12:20"
+          },
+          {
+            "title": "Problem Set 7",
+            "kind": "assignment",
+            "date": "2027-04-21",
+            "time": "11:30",
+            "end_time": null
+          },
+          {
+            "title": "Lab Practical",
+            "kind": "exam",
+            "date": "2027-04-22",
+            "time": "15:00",
+            "end_time": "16:50"
+          },
+          {
+            "title": "Final Exam",
+            "kind": "exam",
+            "date": "2027-05-06",
+            "time": "15:00",
+            "end_time": "17:00"
+          }
+        ]
+      }
+    }
+  ]
+}
