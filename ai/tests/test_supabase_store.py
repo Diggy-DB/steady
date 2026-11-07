@@ -7,7 +7,7 @@ suggestion writes the right rows.
 """
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -20,7 +20,7 @@ from ai.supabase_store import SupabaseStore
 DETROIT = ZoneInfo("America/Detroit")
 NOW = datetime(2026, 10, 5, 18, 30, tzinfo=DETROIT)
 TOKEN = "user-1-access-token"
-ID_COLUMNS = {"calendar_events": "event_id", "ai_suggestions": "suggestion_id", "activity_log": "log_id"}
+ID_COLUMNS = {"calendar_events": "event_id", "tasks": "task_id", "ai_suggestions": "suggestion_id", "activity_log": "log_id"}
 
 
 def number(fixture_id: str) -> int:
@@ -77,6 +77,10 @@ class FakeSupabase:
 
     @staticmethod
     def matches(field, op: str, value: str) -> bool:
+        if op == "not":  # e.g. not.is.null
+            return not FakeSupabase.matches(field, *value.split(".", 1))
+        if op == "is":
+            return field is None if value == "null" else str(field).lower() == value
         field = "" if field is None else str(field)
         return {"eq": field == value, "lte": field <= value, "gte": field >= value}[op]
 
@@ -156,3 +160,28 @@ def test_activity_is_logged(fake):
 def test_unknown_user(fake):
     with pytest.raises(KeyError):
         store(fake).user("nobody")
+
+
+def test_accepting_a_deadline_adds_a_task_row(fake):
+    s = store(fake)
+    s.add_suggestion("user-1", {"type": "CREATE_TASK", "target_id": None, "description": "From your syllabus",
+                                "proposed_change": {"name": "CSE 260 Homework 1", "due": "2026-10-09T23:59:00-04:00",
+                                                    "kind": "deadline", "source": "syllabus"}, "depends_on": []})
+    s.apply(s.suggestions("user-1")[0])
+    task = fake.tables["tasks"][-1]
+    assert (task["name"], task["date"], task["created_by"]) == ("CSE 260 Homework 1", "2026-10-09", "AI")
+    assert task["description"] == "Due 11:59 PM. Added from your syllabus."
+    assert any(t["name"] == "CSE 260 Homework 1" for t in s.tasks("user-1", date(2026, 10, 5), date(2026, 10, 11)))
+
+
+def test_a_weekly_class_is_saved_with_its_rule_and_read_back_every_week(fake):
+    s = store(fake)
+    s.add_suggestion("user-1", {"type": "CREATE_EVENT", "target_id": None, "description": "Weekly class from your syllabus",
+                                "proposed_change": {"name": "CSE 260 Lecture", "start": "2026-09-29T12:40:00-04:00",
+                                                    "end": "2026-09-29T14:00:00-04:00", "source": "syllabus",
+                                                    "recurrence_rule": "FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20261211"}, "depends_on": []})
+    s.apply(s.suggestions("user-1")[0])
+    assert fake.tables["calendar_events"][-1]["recurrence_rule"] == "FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20261211"
+    week = s.events("user-1", datetime(2026, 10, 5, tzinfo=DETROIT), datetime(2026, 10, 12, tzinfo=DETROIT))
+    lectures = [e["start"][:16] for e in week if e["name"] == "CSE 260 Lecture"]
+    assert lectures == ["2026-10-06T12:40", "2026-10-08T12:40"]

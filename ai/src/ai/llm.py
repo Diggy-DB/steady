@@ -24,6 +24,12 @@ SAMPLING = {"temperature": 0.6, "top_p": 0.95}
 # vLLM uses them; Ollama already defaults to the same values for this model.
 EXTRA_SAMPLING = {"top_k": 20, "min_p": 0.0}
 
+
+def thinking_off(base_url: str) -> dict:
+    """The extra_body that turns Qwen3.5's thinking off, said the way each server understands it."""
+    return {"reasoning_effort": "none"} if ":11434" in (base_url or "") else {"chat_template_kwargs": {"enable_thinking": False}}
+
+
 # A whole <think>...</think> block. DOTALL lets "." match newlines too.
 THINK_BLOCK = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 

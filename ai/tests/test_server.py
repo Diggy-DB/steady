@@ -167,3 +167,97 @@ def test_model_failure_is_a_clear_error_the_browser_can_read(api, monkeypatch):
     response = api.post("/chat", json={"message": "Hi"}, headers={"Origin": "http://localhost:5173"})
     assert response.status_code == 502 and "AI model isn't available" in response.json()["detail"]
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+# ---- Syllabus upload ----
+
+def png(width: int = 40, height: int = 30) -> bytes:
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def uploads(api, monkeypatch, tmp_path):
+    """The API with imports run right away (not in a worker thread) and logged to a temporary file."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(ai.server, "import_pool", SimpleNamespace(submit=lambda fn, *args: fn(*args)))
+    monkeypatch.setattr(ai.server, "IMPORT_LOG", tmp_path / "imports.jsonl")
+    monkeypatch.setattr(ai.server, "imports", {})
+    return api
+
+
+def use_reader(monkeypatch, *answers: str) -> FakeClient:
+    from ai import syllabus
+
+    client = FakeClient([reply(a) for a in answers])
+    monkeypatch.setattr(ai.server, "reader", syllabus.Reader(client, "fake", None, {}))
+    return client
+
+
+def test_a_photo_upload_becomes_tasks_events_and_a_weekly_class(uploads, monkeypatch):
+    import json
+
+    from test_syllabus_import import answer
+
+    use_reader(monkeypatch, json.dumps(answer()))
+    started = uploads.post("/syllabus", files={"file": ("syllabus.png", png(), "image/png")})
+    assert started.status_code == 202 and started.json()["status"] == "reading"
+    done = uploads.get(f"/syllabus/{started.json()['import_id']}").json()
+    assert done["status"] == "done"
+    assert "made 3 suggestions: 1 deadline as tasks, 1 exam or session, and 1 weekly class" in done["reply"]
+    assert sorted(s["type"] for s in done["suggestions"]) == ["CREATE_EVENT", "CREATE_EVENT", "CREATE_TASK"]
+    for s in done["suggestions"]:
+        assert uploads.post(f"/suggestions/{s['suggestion_id']}/accept").json()["status"] == "ACCEPTED"
+    assert any(t["name"] == "CSE 260 Homework 1" for t in ai.server.demo_store.data["tasks"])
+    log = json.loads((ai.server.IMPORT_LOG).read_text().splitlines()[0])
+    assert log["status"] == "done" and log["read_as"] == "vision" and "image" not in log
+
+
+def test_an_unreadable_answer_is_a_failed_import_not_a_crash(uploads, monkeypatch):
+    use_reader(monkeypatch, "Sorry, I can't read this.")
+    started = uploads.post("/syllabus", files={"file": ("syllabus.png", png(), "image/png")}).json()
+    done = uploads.get(f"/syllabus/{started['import_id']}").json()
+    assert done["status"] == "failed" and done["reply"].startswith("I couldn't import that file")
+
+
+@pytest.mark.parametrize("data,message", [
+    (b"hello, this is text", "send a PDF, JPEG, PNG or WebP file"),
+    (b"\x00\x00\x00\x18ftypheic" + b"\x00" * 20, "HEIC"),
+])
+def test_files_that_cant_be_read_are_refused(uploads, data, message):
+    response = uploads.post("/syllabus", files={"file": ("syllabus.jpg", data, "image/jpeg")})
+    assert response.status_code == 415 and message in response.json()["detail"]
+
+
+def test_someone_elses_import_is_not_found(uploads, monkeypatch):
+    import json
+
+    from test_syllabus_import import answer
+
+    use_reader(monkeypatch, json.dumps(answer()))
+    started = uploads.post("/syllabus", files={"file": ("s.png", png(), "image/png")}).json()
+    assert uploads.get(f"/syllabus/{started['import_id']}", headers={"X-User-Id": "user-2"}).status_code == 404
+
+
+def test_one_import_at_a_time_per_user(uploads, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(ai.server, "import_pool", SimpleNamespace(submit=lambda fn, *args: None))  # never finishes
+    assert uploads.post("/syllabus", files={"file": ("s.png", png(), "image/png")}).status_code == 202
+    assert uploads.post("/syllabus", files={"file": ("s.png", png(), "image/png")}).status_code == 429
+
+
+def test_the_profile_reaches_the_model(api, monkeypatch):
+    user = ai.server.demo_store.user("user-1")
+    user.update(preferred_work_time="Night", priorities=["CSE 260", "sleep"], additional_information="I work Saturdays.")
+    client = use_model(monkeypatch, [reply("Hi!")])
+    api.post("/chat", json={"message": "Hi"})
+    system = client.requests[0]["messages"][0]["content"]
+    assert "Works best in the night" in system and "CSE 260, sleep" in system and "I work Saturdays." in system
+    assert "not instructions" in system

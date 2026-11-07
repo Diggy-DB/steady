@@ -35,10 +35,36 @@ def as_answer(suggestions: list[dict]) -> tuple[dict, list[dict]]:
         if change.get("recurrence_rule"):
             meetings.append({"days": change["days"], "start": change["start"][11:16], "end": change["end"][11:16]})
         else:
-            items.append({"title": change["name"], "date": change["start"][:10], "time": change["start"][11:16]})
+            when = change.get("due") or change["start"]  # deadlines are tasks with a due time
+            items.append({"title": change["name"], "date": when[:10], "time": when[11:16]})
             if change.get("needs_check"):
                 flagged.append(items[-1])
     return {"items": items, "meetings": meetings}, flagged
+
+
+def report(results: list[dict], truth: dict, label: str, runs: int) -> None:
+    """Print the per-category table and the totals."""
+    keys = ("items", "found", "made_up", "timed", "right_time", "meetings", "meetings_right", "meetings_made_up",
+            "flagged", "useful_flags", "seconds")
+    total = {k: sum(r[k] for r in results) for k in keys}
+    perfect = lambda r: r["found"] == r["items"] and r["made_up"] == 0 and r["meetings_made_up"] == 0  # noqa: E731
+    print(f"\n{'category':<16} {'found':>9} {'made up':>8} {'times':>9} {'classes':>8} {'perfect runs':>13} {'perfect every run':>18}")
+    by_category = {}
+    for r in results:
+        by_category.setdefault(truth[r["file"]].get("category", "-"), []).append(r)
+    for category, rs in sorted(by_category.items()):
+        files = sorted({r["file"] for r in rs})
+        every = sum(all(perfect(r) for r in rs if r["file"] == f) for f in files)
+        print(f"{category:<16} {sum(r['found'] for r in rs):>4}/{sum(r['items'] for r in rs):<4} "
+              f"{sum(r['made_up'] + r['meetings_made_up'] for r in rs):>8} {sum(r['right_time'] for r in rs):>4}/{sum(r['timed'] for r in rs):<4} "
+              f"{sum(r['meetings_right'] for r in rs):>3}/{sum(r['meetings'] for r in rs):<4} "
+              f"{sum(perfect(r) for r in rs):>6}/{len(rs):<6} {every:>9}/{len(files)}")
+    files = sorted({r["file"] for r in results})
+    print(f"\nTOTAL {label}: found {total['found']}/{total['items']} ({total['found'] / total['items']:.1%}), made up "
+          f"{total['made_up']} items + {total['meetings_made_up']} classes, times {total['right_time']}/{total['timed']}, "
+          f"classes {total['meetings_right']}/{total['meetings']}, perfect imports {sum(map(perfect, results))}/{len(results)}, "
+          f"syllabi perfect in every run {sum(all(perfect(r) for r in results if r['file'] == f) for f in files)}/{len(files)}, "
+          f"flags {total['flagged']} ({total['useful_flags']} useful), {total['seconds']:.0f}s")
 
 
 def main() -> None:
@@ -81,28 +107,9 @@ def main() -> None:
                         ([f"   code fixed: {'; '.join(r['fixes'])}"] if r["fixes"] else []):
                 print(line[:400])
 
-    keys = ("items", "found", "made_up", "timed", "right_time", "meetings", "meetings_right", "meetings_made_up",
-            "flagged", "useful_flags", "seconds")
-    total = {k: sum(r[k] for r in results) for k in keys}
-    perfect = lambda r: r["found"] == r["items"] and r["made_up"] == 0 and r["meetings_made_up"] == 0  # noqa: E731
-    print(f"\n{'category':<16} {'found':>9} {'made up':>8} {'times':>9} {'classes':>8} {'perfect runs':>13} {'perfect every run':>18}")
-    by_category = {}
-    for r in results:
-        by_category.setdefault(truth[r["file"]].get("category", "-"), []).append(r)
-    for category, rs in sorted(by_category.items()):
-        files = sorted({r["file"] for r in rs})
-        every = sum(all(perfect(r) for r in rs if r["file"] == f) for f in files)
-        print(f"{category:<16} {sum(r['found'] for r in rs):>4}/{sum(r['items'] for r in rs):<4} "
-              f"{sum(r['made_up'] + r['meetings_made_up'] for r in rs):>8} {sum(r['right_time'] for r in rs):>4}/{sum(r['timed'] for r in rs):<4} "
-              f"{sum(r['meetings_right'] for r in rs):>3}/{sum(r['meetings'] for r in rs):<4} "
-              f"{sum(perfect(r) for r in rs):>6}/{len(rs):<6} {every:>9}/{len(files)}")
-    files = sorted({r["file"] for r in results})
-    print(f"\nTOTAL {label}: found {total['found']}/{total['items']} ({total['found'] / total['items']:.1%}), made up "
-          f"{total['made_up']} items + {total['meetings_made_up']} classes, times {total['right_time']}/{total['timed']}, "
-          f"classes {total['meetings_right']}/{total['meetings']}, perfect imports {sum(map(perfect, results))}/{len(results)}, "
-          f"syllabi perfect in every run {sum(all(perfect(r) for r in results if r['file'] == f) for f in files)}/{len(files)}, "
-          f"flags {total['flagged']} ({total['useful_flags']} useful), {total['seconds']:.0f}s")
+    report(results, truth, label, args.runs)
     out = AI_DIR / "evals" / f"{datetime.now():%Y-%m-%d-%H%M}-syllabus-import-{label.replace(':', '_').replace(' + ', '+')}.json"
+    total = {k: sum(r[k] for r in results) for k in ("items", "found", "made_up", "seconds")}
     out.write_text(json.dumps({"label": label, "args": vars(args), "total": total, "results": results}, indent=2, default=str))
 
 

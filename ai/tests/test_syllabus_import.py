@@ -104,8 +104,45 @@ def test_suggestions_are_created_for_items_and_classes():
     ids = syllabus.suggest(ctx, syllabus.check(answer(), NOW, TEXT))
     changes = [s["proposed_change"] for s in ctx.store.suggestions("user-1")]
     assert len(ids) == 3
-    assert changes[2]["recurrence_rule"] == "FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20270430"
+    assert changes[2]["recurrence_rule"] == "FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20270430;X-SKIP=20270309,20270311"
     assert changes[2]["start"].startswith("2027-01-12T12:40")  # the first Tuesday
+
+
+def test_a_deadline_becomes_a_task_and_an_exam_an_event():
+    ctx = ToolContext(store=FixtureStore(), user_id="user-1", now=NOW)
+    syllabus.suggest(ctx, syllabus.check(answer(), NOW, TEXT))
+    hw, exam, lecture = ctx.store.suggestions("user-1")
+    assert hw["type"] == "CREATE_TASK" and hw["proposed_change"]["due"].startswith("2027-01-22T23:59")
+    assert "start" not in hw["proposed_change"]
+    assert exam["type"] == "CREATE_EVENT" and exam["proposed_change"]["end"].startswith("2027-02-18T14:00")
+    assert all(s["proposed_change"]["source"] == "syllabus" for s in (hw, exam, lecture))
+
+
+def test_accepting_everything_from_a_syllabus_works_even_though_the_exam_is_during_class():
+    from ai.planning import recheck
+
+    ctx = ToolContext(store=FixtureStore(), user_id="user-1", now=NOW)
+    syllabus.suggest(ctx, syllabus.check(answer(), NOW, TEXT))
+    for s in reversed(ctx.store.suggestions("user-1")):  # the weekly class first, then the in-class exam
+        assert recheck(ctx, s) == []
+        ctx.store.apply(s)
+        ctx.store.set_status(s["suggestion_id"], "ACCEPTED")
+    task = next(t for t in ctx.store.data["tasks"] if t["name"] == "CSE 260 Homework 1")
+    assert task["due"] == "2027-01-22" and task["description"].startswith("Due 11:59 PM")
+    week = ctx.store.events("user-1", datetime(2027, 2, 15, tzinfo=NOW.tzinfo), datetime(2027, 2, 20, tzinfo=NOW.tzinfo))
+    assert [(e["name"], e["start"][:16]) for e in week] == [
+        ("CSE 260 Lecture", "2027-02-16T12:40"), ("CSE 260 Lecture", "2027-02-18T12:40"),
+        ("CSE 260 Midterm Exam 1", "2027-02-18T12:40")]
+
+
+def test_a_deadline_that_passed_cant_be_accepted():
+    from ai.planning import recheck
+
+    ctx = ToolContext(store=FixtureStore(), user_id="user-1", now=NOW)
+    syllabus.suggest(ctx, syllabus.check(answer(), NOW, TEXT))
+    hw = ctx.store.suggestions("user-1")[0]
+    later = ToolContext(store=ctx.store, user_id="user-1", now=datetime(2027, 1, 23, 9, 0, tzinfo=NOW.tzinfo))
+    assert "has passed" in recheck(later, hw)[0]
 
 
 def test_digital_pdf_is_read_as_text():
@@ -191,3 +228,29 @@ def test_dates_are_recognized_however_they_are_written(written):
 
 def test_a_different_date_is_not_recognized():
     assert not syllabus.mentions_date("Exam on 2/19 and February 28.", date(2027, 2, 18))
+
+
+def test_a_big_sideways_phone_photo_is_turned_upright_and_shrunk():
+    import io
+
+    from PIL import Image
+
+    photo = Image.new("RGB", (4000, 3000), "white")
+    exif = photo.getexif()
+    exif[274] = 6  # "rotate 90° to show": how phones save a photo taken upright
+    buffer = io.BytesIO()
+    photo.save(buffer, format="JPEG", exif=exif)
+    [page] = syllabus.load_pages(buffer.getvalue(), "photo.jpg")
+    shown = Image.open(io.BytesIO(page.image))
+    assert shown.size == (1200, 1600) and page.mime == "image/jpeg"
+
+
+def test_a_small_upright_photo_is_sent_as_it_is():
+    data = (FIXTURES / "c_mth234_photo.jpg").read_bytes()
+    assert syllabus.load_pages(data, "c_mth234_photo.jpg")[0].image == data
+
+
+def test_a_long_scan_is_refused_with_advice():
+    pages = [syllabus.Page(text="", image=b"x")] * (syllabus.MAX_IMAGE_PAGES + 1)
+    with pytest.raises(ToolError, match="send the pages with the schedule"):
+        syllabus.read(syllabus.Reader(None, "fake", None, {}), pages)

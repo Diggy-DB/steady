@@ -4,17 +4,24 @@ import { supabase } from "./supabase";
 // and only proposes changes; Accept / Decline go through it so they're checked again.
 const AI_URL = import.meta.env.VITE_AI_API_URL ?? "http://localhost:8000";
 
-async function call(path, { method = "POST", body } = {}) {
+async function call(path, { method = "POST", body, form } = {}) {
   const { data } = await supabase.auth.getSession();
   const options = {
     method,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${data.session?.access_token ?? ""}`,
-    },
+    headers: { Authorization: `Bearer ${data.session?.access_token ?? ""}` },
   };
-  if (body !== undefined) options.body = JSON.stringify(body);
-  const response = await fetch(`${AI_URL}${path}`, options);
+  if (form !== undefined) {
+    options.body = form; // the browser sets the multipart Content-Type itself
+  } else if (body !== undefined) {
+    options.headers["Content-Type"] = "application/json";
+    options.body = JSON.stringify(body);
+  }
+  let response;
+  try {
+    response = await fetch(`${AI_URL}${path}`, options);
+  } catch {
+    throw new Error("Can't reach the AI server. It may be off right now; try again later.");
+  }
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = typeof json.detail === "string" ? json.detail : JSON.stringify(json.detail ?? json);
@@ -27,6 +34,14 @@ export const ai = {
   // history: earlier turns as {role: "user" | "assistant", content}, final answers only.
   chat: (message, history) => call("/chat", { body: { message, history } }),
   accept: (suggestionId) => call(`/suggestions/${suggestionId}/accept`),
+
+  // Syllabus import: upload starts reading the file; ask for the result until it's done.
+  uploadSyllabus: (file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return call("/syllabus", { form });
+  },
+  syllabusImport: (importId) => call(`/syllabus/${importId}`, { method: "GET" }),
   decline: (suggestionId) => call(`/suggestions/${suggestionId}/decline`),
 
   // Long-term memory: what Steady has learned about the user from chats and journal entries.

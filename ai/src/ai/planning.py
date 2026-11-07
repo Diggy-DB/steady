@@ -13,6 +13,7 @@ move in `depends_on` (it only works if the user accepts the move too).
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
+from ai.recurrence import last_day, occurrences
 from ai.schedule import MAX_DAYS, ToolContext, ToolError, format_day, format_time, overlaps, parse_day, too_many_days
 
 # Free time is only looked for between these hours. Later this comes from the user's preferences.
@@ -75,12 +76,12 @@ def busy(
             e_end = datetime.fromisoformat(e["end"]).astimezone(tz)
             taken.append((e_start, e_end, e["name"]))
     for s in ctx.store.suggestions(ctx.user_id, status="PENDING"):
-        if s["suggestion_id"] == ignore_suggestion_id:
+        if s["suggestion_id"] == ignore_suggestion_id or s["type"] == "CREATE_TASK":  # a task takes no time
             continue
-        s_start = datetime.fromisoformat(s["proposed_change"]["start"]).astimezone(tz)
-        s_end = datetime.fromisoformat(s["proposed_change"]["end"]).astimezone(tz)
-        if overlaps(s_start, s_end, start, end):
-            taken.append((s_start, s_end, f"your pending suggestion {s['suggestion_id']}"))
+        for o in occurrences(s["proposed_change"], start, end, tz):  # a weekly class, each week
+            o_start = datetime.fromisoformat(o["start"]).astimezone(tz)
+            o_end = datetime.fromisoformat(o["end"]).astimezone(tz)
+            taken.append((o_start, o_end, f"your pending suggestion {s['suggestion_id']}"))
     return sorted(taken)
 
 
@@ -209,8 +210,10 @@ def similar_this_week(ctx: ToolContext, name: str, start: datetime) -> list[str]
     ]
     for s in ctx.store.suggestions(ctx.user_id, status="PENDING"):
         change = s["proposed_change"]
+        if s["type"] != "CREATE_EVENT":
+            continue
         s_start = datetime.fromisoformat(change["start"]).astimezone(tz)
-        if s["type"] == "CREATE_EVENT" and monday <= s_start < week_end and key_words(change["name"]) & words:
+        if monday <= s_start < week_end and key_words(change["name"]) & words:
             s_end = datetime.fromisoformat(change["end"]).astimezone(tz)
             found.append(f"your pending suggestion {s['suggestion_id']}: {change['name']} ({describe_range(s_start, s_end)})")
     return found
@@ -351,15 +354,26 @@ def recheck(ctx: ToolContext, suggestion: dict) -> list[str]:
     """
     if suggestion["status"] != "PENDING":
         return [f"it is {suggestion['status']}, not PENDING"]
+    change = suggestion["proposed_change"]
+    tz = user_timezone(ctx)
+    if suggestion["type"] == "CREATE_TASK":
+        due = datetime.fromisoformat(change["due"]).astimezone(tz)
+        return [f"it was due {format_day(due)} at {format_time(due)}, which has passed"] if due < ctx.now else []
+    if change.get("recurrence_rule"):  # a weekly class: fine while the semester lasts
+        last = last_day(change["recurrence_rule"])
+        return [f"the class ended on {format_day(datetime.combine(last, time.min, tzinfo=tz))}"] \
+            if last and last < ctx.now.astimezone(tz).date() else []
+    if change.get("source") == "syllabus":  # an exam or class session: its time is set by the course, so clashes are fine
+        end = datetime.fromisoformat(change["end"]).astimezone(tz)
+        return [f"{change['name']} is already over"] if end < ctx.now else []
     if suggestion["type"] == "MOVE_EVENT":
         event = ctx.store.event(ctx.user_id, suggestion["target_id"])
         if event is None:
             return ["the event no longer exists"]
         if not event["changeable"]:
             return [f"{event['name']} is now fixed (changeable: false)"]
-    tz = user_timezone(ctx)
-    start = datetime.fromisoformat(suggestion["proposed_change"]["start"]).astimezone(tz)
-    end = datetime.fromisoformat(suggestion["proposed_change"]["end"]).astimezone(tz)
+    start = datetime.fromisoformat(change["start"]).astimezone(tz)
+    end = datetime.fromisoformat(change["end"]).astimezone(tz)
     try:
         check_time(ctx, start, end, suggestion["target_id"], suggestion["suggestion_id"])
     except ToolError as error:

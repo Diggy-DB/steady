@@ -196,3 +196,24 @@ a specific tool instead of the outcome; an injection case that also demanded 3 h
 5. **Ignores the clock**: suggests 8 AM at 9 AM; says tonight is full when 8-10 PM is free.
 6. **Daylight saving**: calls the night shift 8 hours (it's 7), all 3 runs. → `get_schedule` could
    show each event's length.
+
+### Syllabus suite: Qwen3.5-4B through the import pipeline, 3 runs per syllabus (Nov 6, Mac/Ollama)
+
+`evals/2026-11-06-0636-syllabus-import-qwen3.5_4b-rescored.json`: **905 of 1,050 dated items found
+(86%)**, 124 made up, 851 of 905 times right, 102 of 108 weekly classes right; 8 of 26 syllabi perfect
+in all 3 runs.
+
+The scorer was wrong twice before this was right, and fixing it changed the picture (the saved
+answers were re-scored, not re-run): an item with the right date but its own numbering ("Field notes
+(Week 4)") counted as missed and made up, and items whose titles weren't on a fixed word list
+("Discussion post", "Project", "Essay", "Journal") could never match. The online course went from 3/39
+to 37/39 on re-scoring alone.
+
+The real weak spots, read by hand:
+- **Relative dates (11 of 87)**: homework put on the Monday of its week instead of the "(Wed)" the
+  table says; "Friday of Week 4" arithmetic off by a day or a week.
+- **"Every Friday ... except spring break"**: the weekly dates came out right until the break, which
+  wasn't skipped.
+
+Next fix, the same idea that fixed the ten-dates-in-one-sentence case: let the model write "Week 4,
+Friday" or "every Friday from A to B except C", and let code work out the dates.

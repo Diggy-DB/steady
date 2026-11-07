@@ -12,6 +12,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from ai.llm import AI_DIR
+from ai.recurrence import occurrences
 
 FIXTURE = AI_DIR / "fixtures" / "week.json"
 MAX_DAYS = 14  # keeps tool results small enough for a 4B model
@@ -40,20 +41,16 @@ class FixtureStore:
         raise KeyError(f"no user {user_id!r}")
 
     def events(self, user_id: str, start: datetime, end: datetime) -> list[dict]:
-        """This user's events that overlap the time range [start, end), earliest first."""
-        found = [
-            e
-            for e in self.data["events"]
-            if e["user_id"] == user_id
-            and overlaps(datetime.fromisoformat(e["start"]), datetime.fromisoformat(e["end"]), start, end)
-        ]
+        """This user's events that overlap the time range [start, end), earliest first (each time a repeating one happens)."""
+        tz = ZoneInfo(self.user(user_id)["timezone"])
+        found = [o for e in self.data["events"] if e["user_id"] == user_id for o in occurrences(e, start, end, tz)]
         return sorted(found, key=lambda e: datetime.fromisoformat(e["start"]))
 
     def event(self, user_id: str, event_id: str) -> dict | None:
         """One of this user's events by id, or None. Another user's event counts as not found."""
         for e in self.data["events"]:
             if e["user_id"] == user_id and e["event_id"] == event_id:
-                return e
+                return {**e, "changeable": False} if e.get("recurrence_rule") else e  # a series can't be moved as one event
         return None
 
     def tasks(self, user_id: str, first_day: date, last_day: date) -> list[dict]:
@@ -95,7 +92,14 @@ class FixtureStore:
     def apply(self, suggestion: dict) -> None:
         """Make an accepted suggestion real, in memory only (Supabase mode writes to the database)."""
         change = suggestion["proposed_change"]
-        if suggestion["type"] == "CREATE_EVENT":
+        if suggestion["type"] == "CREATE_TASK":
+            due = datetime.fromisoformat(change["due"])
+            self.data["tasks"].append(
+                {"task_id": f"ai-{suggestion['suggestion_id']}", "user_id": suggestion["user_id"], "name": change["name"],
+                 "description": task_description(due), "due": due.date().isoformat(), "status": "NOT_STARTED",
+                 "changeable": True}
+            )
+        elif suggestion["type"] == "CREATE_EVENT":
             self.data["events"].append(
                 {
                     "event_id": f"ai-{suggestion['suggestion_id']}",
@@ -105,11 +109,17 @@ class FixtureStore:
                     "end": change["end"],
                     "changeable": True,
                     "created_by": "AI",
+                    **({"recurrence_rule": change["recurrence_rule"]} if change.get("recurrence_rule") else {}),
                 }
             )
         elif suggestion["type"] == "MOVE_EVENT":
             event = self.event(suggestion["user_id"], suggestion["target_id"])
             event["start"], event["end"] = change["start"], change["end"]
+
+
+def task_description(due: datetime) -> str:
+    """The note on a task made from a deadline: the due time, since a task only has a date."""
+    return f"Due {due.hour % 12 or 12}:{due:%M} {'AM' if due.hour < 12 else 'PM'}. Added from your syllabus."
 
 
 @dataclass

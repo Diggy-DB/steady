@@ -79,17 +79,27 @@ kind is one of: assignment, quiz, exam, project, presentation, other. days use M
 
 # Words that mean the same kind of item: "WebWork 3", "HW 3", "Problem Set 3" are all homework 3.
 ALIASES = {"hw": "homework", "ww": "homework", "webwork": "homework", "ps": "homework", "pset": "homework",
-           "problem": "homework", "midterms": "midterm", "quizzes": "quiz", "exams": "exam", "papers": "paper",
-           "homeworks": "homework", "presentations": "presentation", "labs": "lab", "problems": "homework"}
+           "problem": "homework", "set": "homework", "assignment": "homework", "midterms": "midterm", "quizzes": "quiz",
+           "exams": "exam", "papers": "paper", "homeworks": "homework", "presentations": "presentation", "labs": "lab",
+           "problems": "homework", "posts": "post", "reply": "replies", "journals": "journal", "projects": "project",
+           "essays": "essay"}
 KEYWORDS = {"homework", "webwork", "problem", "quiz", "exam", "midterm", "final", "paper", "bibliography",
             "proposal", "presentation", "practical", "lab"}
 
 
+# Words that say nothing about WHICH item it is: numbering ("Week 4"), filler, and course-code letters.
+FILLER = {"the", "and", "for", "due", "week", "weekly", "online", "class", "course", "item", "of", "on", "in", "my",
+          "your", "work", "session", "submit", "submission", "turn"}
+
+
 def words(title: str) -> tuple[set[str], set[str]]:
-    """(key words, numbers) of a title, so 'HW 3' matches 'Homework 3' but not 'Homework 4'."""
+    """(meaningful words, numbers) of a title, so 'HW 3' matches 'Homework 3' but not 'Homework 4'.
+    Any word of 3+ letters counts (it used to be a fixed list, so 'Discussion post 1' could never match)."""
     tokens = re.findall(r"[a-z]+|\d+", title.lower().replace("-", " "))
     tokens = [ALIASES.get(t, t) for t in tokens]
-    return {t for t in tokens if t in KEYWORDS}, {t for t in tokens if t.isdigit()}
+    code_letters = {t for t, nxt in zip(tokens, tokens[1:] + [""]) if t.isalpha() and len(t) <= 4 and nxt.isdigit() and len(nxt) == 3}
+    meaningful = {t for t in tokens if t.isalpha() and len(t) >= 3 and t not in FILLER and t not in code_letters}
+    return meaningful, {t for t in tokens if t.isdigit() and len(t) < 3}
 
 
 def same_item(truth: dict, guess: dict, strict_numbers: bool = True) -> bool:

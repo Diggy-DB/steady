@@ -29,7 +29,7 @@ from ai import agent
 from ai.eval_generated import GENERATED
 from ai.eval_suite import SUITE
 from ai.evals import SCENARIOS, run_scenario
-from ai.llm import AI_DIR, load_settings, make_client
+from ai.llm import AI_DIR, load_settings, make_client, thinking_off
 
 
 def wilson(passed: int, total: int, z: float = 1.96) -> tuple[float, float]:
@@ -96,8 +96,7 @@ def main() -> None:
     client = make_client(settings)
     model = args.model or settings.model
     if args.no_think:  # said the way each server understands it
-        off = {"reasoning_effort": "none"} if ":11434" in settings.base_url else {"chat_template_kwargs": {"enable_thinking": False}}
-        agent.EXTRA_SAMPLING = {**agent.EXTRA_SAMPLING, **off}
+        agent.EXTRA_SAMPLING = {**agent.EXTRA_SAMPLING, **thinking_off(settings.base_url)}
         agent.SAMPLING = {**agent.SAMPLING, "presence_penalty": 0.0}
     suites = {"full": SUITE, "generated": GENERATED, "all": SUITE + GENERATED, "classic": SCENARIOS}
     scenarios = select(suites[args.suite], args.only)

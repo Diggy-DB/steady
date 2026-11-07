@@ -1,6 +1,8 @@
 """HTTP API for the planning assistant, for the backend and frontend to call.
 
     POST /chat                          ask a question; returns the reply and any new suggestions
+    POST /syllabus                      upload a syllabus (PDF or photo); starts reading it, returns an import id
+    GET  /syllabus/{id}                 the import: still reading, or the reply and the suggestions it made
     GET  /suggestions                   the user's pending suggestions
     POST /suggestions/{id}/check        re-run the checks (what Accept does first)
     POST /suggestions/{id}/accept       check again, apply the change, mark it ACCEPTED, log it
@@ -19,31 +21,43 @@ Two modes, chosen with the STORE environment variable:
   "Authorization: Bearer <token>"; it is checked with Supabase, and every database request
   is made with it, so Row Level Security applies.
 
+LLM_THINKING=off turns the chat model's thinking off (faster, for Qwen3.5); syllabus reading never thinks.
+
 Run locally (from ai/):
     uv run uvicorn ai.server:app --port 8000
 """
 
+import json
 import os
+import secrets
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 import httpx
 import openai
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from ai import agent, syllabus
 from ai.agent import run_agent
-from ai.llm import load_settings, make_client
+from ai.llm import AI_DIR, load_settings, make_client, thinking_off
 from ai.memory import UserMemory, build_user_memory
 from ai.planning import recheck
-from ai.schedule import FixtureStore, ToolContext
+from ai.schedule import FixtureStore, ToolContext, ToolError
 from ai.supabase_store import SupabaseStore
 
 settings = load_settings()  # also loads ai/.env, so it must come before the os.getenv calls below
 llm = make_client(settings)
+if os.getenv("LLM_THINKING", "on") == "off":
+    agent.EXTRA_SAMPLING = {**agent.EXTRA_SAMPLING, **thinking_off(settings.base_url)}
+    agent.SAMPLING = {**agent.SAMPLING, "presence_penalty": 0.0}
+reader = syllabus.Reader.for_server(llm, settings.model)
 
 STORE = os.getenv("STORE", "fixture")
 DEMO_NOW = os.getenv("DEMO_NOW", "2026-10-05 18:30")
@@ -152,11 +166,137 @@ def chat(request: ChatRequest, background: BackgroundTasks, ctx: ToolContext = D
     before = {s["suggestion_id"] for s in ctx.store.suggestions(ctx.user_id)}
     history = [turn.model_dump() for turn in request.history]
     memories = recall(ctx.user_id, request.message)
-    result = run_agent(llm, settings.model, ctx, request.message, verbose=False, history=history, memories=memories)
+    result = run_agent(llm, settings.model, ctx, request.message, verbose=False, history=history, memories=memories,
+                       profile=ctx.store.user(ctx.user_id))
     new = [s for s in ctx.store.suggestions(ctx.user_id) if s["suggestion_id"] not in before]
     if memory:  # learn from this turn after the reply has been sent, so the user doesn't wait for it
         background.add_task(learn, memory.remember_chat, ctx.user_id, request.message, result["answer"])
     return ChatResponse(reply=result["answer"], suggestions=new, run_id=result["run_id"], memories_used=memories)
+
+
+# ---- Syllabus import ----
+# Reading a syllabus takes from a few seconds (a digital PDF) to a minute or more (photos and scans), longer
+# than a web proxy waits for one request (RunPod's closes after about 100 s). So POST /syllabus starts the
+# import in the background and answers at once; the page asks GET /syllabus/{id} until it's done.
+
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+IMPORT_LOG = AI_DIR / "logs" / "imports.jsonl"
+imports: dict[str, dict] = {}  # import id -> {"user_id", "status", "reply", "suggestion_ids", "started"}
+imports_lock = threading.Lock()
+import_pool = ThreadPoolExecutor(max_workers=int(os.getenv("IMPORT_WORKERS", "2")))
+
+
+class SyllabusImport(BaseModel):
+    import_id: str
+    status: Literal["reading", "done", "failed"]
+    reply: str = ""
+    suggestions: list[dict] = []  # PENDING suggestions it made, for Accept / Decline cards
+    seconds: float = 0
+
+
+def file_kind(data: bytes) -> str | None:
+    """'.pdf', '.jpg', '.png' or '.webp' from the file's first bytes (its name and type can't be trusted)."""
+    if data.startswith(b"%PDF"):
+        return ".pdf"
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    return None
+
+
+def import_reply(summary: dict, made: list[dict]) -> str:
+    """What the chat says when an import is done. Written by code, so the counts are always right."""
+    tasks = sum(1 for s in made if s["type"] == "CREATE_TASK")
+    weekly = sum(1 for s in made if s["proposed_change"].get("recurrence_rule"))
+    events = len(made) - tasks - weekly
+    course = summary.get("course") or "your syllabus"
+    how = {"text": "the PDF's text", "vision": "the page images", "ocr": "the page images"}[summary["read_as"]]
+    parts = [f"I read {course} (from {how}) and made {len(summary['suggestion_ids'])} suggestions: "
+             f"{tasks} deadline{'s' * (tasks != 1)} as tasks, {events} exam{'s' * (events != 1)} or "
+             f"session{'s' * (events != 1)}, and {weekly} weekly class{'es' * (weekly != 1)}."]
+    if not summary["suggestion_ids"]:
+        parts = [f"I read {course} (from {how}) but found nothing dated that's still coming up."]
+    if summary["needs_check"]:
+        parts.append("Please check these against the syllabus: " + "; ".join(summary["needs_check"]) + ".")
+    missing = summary["dates_not_imported"]
+    if 0 < len(missing) <= 6:
+        parts.append("The syllabus also mentions these dates, which I didn't add: " + ", ".join(missing)
+                     + ". If one is a deadline, tell me and I'll suggest it.")
+    elif missing:  # usually a week-by-week schedule's dates; listing them all would bury the rest
+        parts.append(f"The syllabus mentions {len(missing)} other dates I didn't add (like the weekly schedule's "
+                     f"dates, from {missing[0]} to {missing[-1]}). If any of them is a deadline, tell me and I'll suggest it.")
+    if summary["left_out"]:
+        parts.append("Left out: " + "; ".join(summary["left_out"][:8]) + ("; ..." if len(summary["left_out"]) > 8 else "") + ".")
+    if summary["suggestion_ids"]:
+        parts.append("Nothing is on your calendar until you accept. Review the cards below.")
+    return "\n\n".join(parts)
+
+
+def run_import(import_id: str, ctx: ToolContext, data: bytes, filename: str) -> None:
+    """Read the syllabus and make the suggestions (in a worker thread). Errors become a reply, never a crash."""
+    job = imports[import_id]
+    summary: dict = {}
+    try:
+        summary = syllabus.import_syllabus(ctx, reader, data, filename)
+        ids = set(summary["suggestion_ids"])
+        made = [s for s in ctx.store.suggestions(ctx.user_id) if s["suggestion_id"] in ids]
+        job.update(status="done", reply=import_reply(summary, made), suggestion_ids=summary["suggestion_ids"])
+    except ToolError as error:
+        job.update(status="failed", reply=f"I couldn't import that file: {error}.")
+    except openai.APIError as error:
+        job.update(status="failed", reply=f"The AI model isn't available right now ({error.message}). Try again in a minute.")
+    except Exception as error:  # anything else: say so, and keep the server running
+        print(f"Syllabus import {import_id} failed: {error!r}")
+        job.update(status="failed", reply="Something went wrong while reading that file. Try again, or try a clearer photo or the PDF.")
+    job["seconds"] = round(time.time() - job["started"], 1)
+    try:  # what happened, without the file itself: for reviewing the team test
+        IMPORT_LOG.parent.mkdir(exist_ok=True)
+        with IMPORT_LOG.open("a") as log:
+            log.write(json.dumps({"import_id": import_id, "user_id": ctx.user_id, "file": filename, "bytes": len(data),
+                                  "status": job["status"], "seconds": job["seconds"], "read_as": summary.get("read_as"),
+                                  "course": summary.get("course"), "items": summary.get("items"),
+                                  "weekly_classes": summary.get("weekly_classes"), "needs_check": summary.get("needs_check"),
+                                  "fixes": summary.get("fixes"), "left_out": summary.get("left_out"),
+                                  "dates_not_imported": summary.get("dates_not_imported"), "reply": job["reply"]},
+                                 default=str) + "\n")
+    except OSError as error:
+        print(f"Couldn't log import {import_id}: {error}")
+
+
+@app.post("/syllabus", response_model=SyllabusImport, status_code=202)
+def upload_syllabus(file: UploadFile = File(...), ctx: ToolContext = Depends(context)) -> SyllabusImport:
+    data = file.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"that file is over {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+    kind = file_kind(data)
+    if kind is None:
+        heic = data[4:12] in (b"ftypheic", b"ftypheix", b"ftypmif1", b"ftyphevc")
+        raise HTTPException(415, "iPhone HEIC photos can't be read yet: take a screenshot of the photo and send that"
+                            if heic else "send a PDF, JPEG, PNG or WebP file")
+    with imports_lock:
+        if any(j["user_id"] == ctx.user_id and j["status"] == "reading" for j in imports.values()):
+            raise HTTPException(429, "I'm still reading your last file; wait for it to finish")
+        import_id = secrets.token_urlsafe(9)
+        imports[import_id] = {"user_id": ctx.user_id, "status": "reading", "reply": "", "suggestion_ids": [],
+                              "started": time.time(), "seconds": 0}
+        for old in [i for i, j in imports.items() if time.time() - j["started"] > 6 * 3600]:
+            del imports[old]  # forget imports from hours ago
+    import_pool.submit(run_import, import_id, ctx, data, f"upload{kind}")
+    return SyllabusImport(import_id=import_id, status="reading")
+
+
+@app.get("/syllabus/{import_id}", response_model=SyllabusImport)
+def syllabus_status(import_id: str, ctx: ToolContext = Depends(context)) -> SyllabusImport:
+    job = imports.get(import_id)
+    if job is None or job["user_id"] != ctx.user_id:  # someone else's import counts as not found
+        raise HTTPException(404, f"no import {import_id}")
+    ids = set(job["suggestion_ids"])
+    made = [s for s in ctx.store.suggestions(ctx.user_id) if s["suggestion_id"] in ids] if ids else []
+    seconds = job["seconds"] if job["status"] != "reading" else round(time.time() - job["started"], 1)
+    return SyllabusImport(import_id=import_id, status=job["status"], reply=job["reply"], suggestions=made, seconds=seconds)
 
 
 def recall(user_id: str, message: str) -> list[str]:

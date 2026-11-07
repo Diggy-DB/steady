@@ -126,6 +126,18 @@ check("suggestions can't be deleted through the API", (await as(db, A, `delete f
 check("another user can't see it", (await as(db, B, `select * from public.ai_suggestions`)).rows.length === 0);
 check("a move needs a target event", await fails(as(db, A, `insert into public.ai_suggestions (type, proposed_change) values ('MOVE_EVENT', '{}')`)));
 
+// Task suggestions (third migration): a deadline from a syllabus becomes a task when accepted.
+if (process.argv.length > 4) {
+  const task = await as(db, A, `insert into public.ai_suggestions (type, description, proposed_change)
+    values ('CREATE_TASK', 'From your syllabus', '{"name": "HW 1", "due": "2027-01-22T23:59:00-05:00", "kind": "deadline"}')
+    returning suggestion_id`);
+  check("a task suggestion can be stored", task.rows.length === 1);
+  check("a task suggestion has no target event", await fails(as(db, A, `insert into public.ai_suggestions (type, target_id, proposed_change)
+    values ('CREATE_TASK', ${eventId}, '{}')`)));
+  check("unknown suggestion types are still refused", await fails(as(db, A, `insert into public.ai_suggestions (type, proposed_change)
+    values ('DELETE_EVENT', '{}')`)));
+}
+
 // Activity log: append-only.
 await as(db, A, `insert into public.activity_log (action, target_type, target_id, performed_by) values ('SUGGESTION_ACCEPTED', 'ai_suggestion', '${sid}', 'USER')`);
 check("activity log entries can't be edited", (await as(db, A, `update public.activity_log set action = 'X'`)).affectedRows === 0);

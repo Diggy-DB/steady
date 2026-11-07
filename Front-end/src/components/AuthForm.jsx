@@ -24,6 +24,9 @@ function AuthForm() {
             email,
             password,
             options: {
+              // The confirmation email links back to this site (localhost or GitHub Pages). Supabase only
+              // allows addresses listed under Authentication > URL Configuration > Redirect URLs.
+              emailRedirectTo: window.location.origin + import.meta.env.BASE_URL,
               data: {
                 first_name: firstName,
                 last_name: lastName,

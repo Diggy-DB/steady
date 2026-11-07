@@ -67,6 +67,27 @@ Response:
 The frontend's `ChatWidget` shows `reply` as a bubble and each suggestion as a card with
 **Accept** / **Decline**. Only those buttons change anything.
 
+### `POST /syllabus` and `GET /syllabus/{id}`
+
+Upload a syllabus as `multipart/form-data` with one field, `file` (PDF, JPEG, PNG or WebP, at most 15 MB).
+The answer comes at once (`202`), because reading takes from seconds (a digital PDF) to a minute or more
+(photos), longer than a proxy waits:
+
+```json
+{"import_id": "ZWjrqODh3h4q", "status": "reading", "reply": "", "suggestions": [], "seconds": 0}
+```
+
+Ask `GET /syllabus/{import_id}` every few seconds until `status` is `done` or `failed`. Then `reply` is
+the chat message (written by code, so the counts are right) and `suggestions` are PENDING cards like the
+ones from `/chat`, of three kinds: `CREATE_TASK` (a deadline: `proposed_change` has `name` and `due`),
+`CREATE_EVENT` (an exam or in-class item: `start`, `end`), and `CREATE_EVENT` with a `recurrence_rule`
+(a weekly class, e.g. `FREQ=WEEKLY;BYDAY=TU,TH;UNTIL=20270430;X-SKIP=20270309,20270311`, where X-SKIP
+lists days with no class). `needs_check: true` marks a date the code wasn't sure about. Accepting a task
+adds a row to `tasks`; accepting a weekly class adds one `calendar_events` row with the rule, which the
+calendar (`Front-end/src/lib/recurrence.js`) and the AI (`src/ai/recurrence.py`) read the same way.
+Errors: `413` too big, `415` not a PDF or image (with advice for iPhone HEIC photos), `429` one import
+at a time per person, `404` someone else's import.
+
 ### `GET /suggestions`
 
 The user's pending suggestions.

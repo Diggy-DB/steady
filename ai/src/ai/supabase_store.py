@@ -8,7 +8,8 @@ frontend's mockData.js): events store start_date/start_time/end_date/end_time in
 user's local time, tasks have a `date`. Rows are converted to the same shape
 FixtureStore returns, so the tools can't tell the two stores apart.
 
-Not handled yet: recurring events (recurrence_rule) are treated as one-off events.
+Recurring events (recurrence_rule) are read as one-off events on their first day; the app's calendar
+expands them. Accepting a CREATE_TASK suggestion inserts a row in tasks.
 The tables are created by supabase/migrations/20261015120000_steady_planner_schema.sql.
 """
 
@@ -17,7 +18,8 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from ai.schedule import overlaps
+from ai.recurrence import occurrences
+from ai.schedule import task_description
 
 
 class SupabaseStore:
@@ -47,29 +49,36 @@ class SupabaseStore:
 
     def events(self, user_id: str, start: datetime, end: datetime) -> list[dict]:
         """This user's events that overlap [start, end), earliest first."""
-        # Ask the database for every event on the days involved, then filter exactly here.
-        rows = self._get(
+        # Ask the database for every event on the days involved, plus every repeating event that has
+        # started by then, and filter exactly here (repeating events once per time they happen).
+        one_off = self._get(
             "calendar_events",
             [
                 ("user_id", f"eq.{user_id}"),
+                ("recurrence_rule", "is.null"),
                 ("start_date", f"lte.{end.date().isoformat()}"),
                 ("end_date", f"gte.{start.date().isoformat()}"),
             ],
         )
+        repeating = self._get(
+            "calendar_events",
+            [("user_id", f"eq.{user_id}"), ("recurrence_rule", "not.is.null"), ("start_date", f"lte.{end.date().isoformat()}")],
+        )
         tz = ZoneInfo(self.user(user_id)["timezone"])
-        found = [self._event(row, tz) for row in rows]
-        found = [
-            e
-            for e in found
-            if overlaps(datetime.fromisoformat(e["start"]), datetime.fromisoformat(e["end"]), start, end)
-        ]
+        found = []
+        for row in one_off + repeating:
+            try:
+                found += occurrences(self._event(row, tz), start, end, tz)
+            except ValueError:  # a rule the AI can't follow: count only its first day
+                found += occurrences({**self._event(row, tz), "recurrence_rule": None}, start, end, tz)
         return sorted(found, key=lambda e: datetime.fromisoformat(e["start"]))
 
     def event(self, user_id: str, event_id: str) -> dict | None:
         rows = self._get("calendar_events", [("user_id", f"eq.{user_id}"), ("event_id", f"eq.{event_id}")])
         if not rows:
             return None
-        return self._event(rows[0], ZoneInfo(self.user(user_id)["timezone"]))
+        event = self._event(rows[0], ZoneInfo(self.user(user_id)["timezone"]))
+        return {**event, "changeable": False} if event.get("recurrence_rule") else event  # a series moves as one
 
     def tasks(self, user_id: str, first_day: date, last_day: date) -> list[dict]:
         rows = self._get(
@@ -132,6 +141,13 @@ class SupabaseStore:
         """Make an accepted suggestion real in calendar_events, with the user's own token."""
         tz = ZoneInfo(self.user(suggestion["user_id"])["timezone"])
         change = suggestion["proposed_change"]
+        if suggestion["type"] == "CREATE_TASK":  # a deadline: a row in tasks, due that day
+            due = datetime.fromisoformat(change["due"]).astimezone(tz)
+            body = {"user_id": suggestion["user_id"], "name": change["name"], "description": task_description(due),
+                    "date": due.date().isoformat(), "status": "NOT_STARTED", "changeable": True, "created_by": "AI"}
+            if not self._write("POST", "tasks", None, body):
+                raise LookupError(f"suggestion {suggestion['suggestion_id']} couldn't be applied")
+            return
         start = datetime.fromisoformat(change["start"]).astimezone(tz)
         end = datetime.fromisoformat(change["end"]).astimezone(tz)
         times = {
@@ -141,7 +157,8 @@ class SupabaseStore:
             "end_time": f"{end:%H:%M:%S}",
         }
         if suggestion["type"] == "CREATE_EVENT":
-            body = {"user_id": suggestion["user_id"], "name": change["name"], **times, "changeable": True, "created_by": "AI"}
+            body = {"user_id": suggestion["user_id"], "name": change["name"], **times, "changeable": True, "created_by": "AI",
+                    "recurrence_rule": change.get("recurrence_rule")}
             written = self._write("POST", "calendar_events", None, body)
         else:
             written = self._write("PATCH", "calendar_events", [("event_id", f"eq.{suggestion['target_id']}")], times)
@@ -167,6 +184,7 @@ class SupabaseStore:
             "start": start.isoformat(),
             "end": end.isoformat(),
             "changeable": bool(row["changeable"]),
+            **({"recurrence_rule": row["recurrence_rule"]} if row.get("recurrence_rule") else {}),
         }
 
     @staticmethod

@@ -17,6 +17,7 @@ dependencies = [
     "pillow>=13.0.0",
     "pypdfium2>=5.14.0",
     "python-dotenv>=1.2.4",
+    "python-multipart>=0.0.33",
     "transformers>=5.18.0",
     "tzdata>=2026.5",
     "uvicorn>=0.54.0",

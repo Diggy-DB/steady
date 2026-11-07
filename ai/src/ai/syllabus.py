@@ -24,10 +24,13 @@ from zoneinfo import ZoneInfo
 
 from openai import OpenAI
 
+from ai.llm import thinking_off
 from ai.schedule import ToolContext, ToolError
 
 MIN_TEXT_PER_PAGE = 200  # characters; a PDF page with less text than this is treated as a scan
 DPI = 150  # page images: readable small print at about 2,000 image tokens per page
+MAX_SIDE = 1600  # photos are shrunk to this many pixels on the longest side
+MAX_IMAGE_PAGES = 12  # scanned pages read in one go (about 2,000 tokens each)
 DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 RRULE_DAYS = {"Mon": "MO", "Tue": "TU", "Wed": "WE", "Thu": "TH", "Fri": "FR", "Sat": "SA", "Sun": "SU"}
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -79,8 +82,31 @@ def load_pages(data: bytes, filename: str) -> list[Page]:
             page.render(scale=DPI / 72).to_pil().save(buffer, format="PNG")
             pages.append(Page(text=page.get_textpage().get_text_range(), image=buffer.getvalue()))
         return pages
-    mime = "image/png" if filename.lower().endswith(".png") else "image/jpeg"
-    return [Page(text="", image=data, mime=mime)]
+    lower = filename.lower()
+    mime = "image/png" if lower.endswith(".png") else "image/webp" if lower.endswith(".webp") else "image/jpeg"
+    return [Page(*prepare_image(data, mime))]
+
+
+def prepare_image(data: bytes, mime: str) -> tuple[str, bytes, str]:
+    """A photo as the model should see it: upright (phones save the turn as EXIF), and at most MAX_SIDE pixels.
+
+    A 12-megapixel phone photo would cost about 15,000 image tokens; at 1,600 pixels it's about 2,500, and
+    the print is still readable (all the test photos are this size). Small, upright images are left as they are.
+    """
+    from PIL import Image, ImageOps
+
+    try:
+        image = Image.open(io.BytesIO(data))
+        turned = image.getexif().get(0x0112, 1) not in (1, None)  # the EXIF Orientation tag
+        if not turned and max(image.size) <= MAX_SIDE:
+            return "", data, mime
+        upright = ImageOps.exif_transpose(image)
+    except Exception:
+        raise ToolError("that file isn't an image I can open; send a JPEG, PNG or PDF") from None
+    upright.thumbnail((MAX_SIDE, MAX_SIDE), Image.LANCZOS)
+    buffer = io.BytesIO()
+    upright.convert("RGB").save(buffer, format="JPEG", quality=90)
+    return "", buffer.getvalue(), "image/jpeg"
 
 
 def has_text(pages: list[Page]) -> bool:
@@ -102,11 +128,7 @@ class Reader:
     @classmethod
     def for_server(cls, client: OpenAI, model: str, ocr_model: str | None = None) -> "Reader":
         """Thinking off and top_k 20, said the way the server understands (Ollama or vLLM)."""
-        if ":11434" in str(client.base_url):
-            extra = {"top_k": 20, "reasoning_effort": "none"}
-        else:
-            extra = {"top_k": 20, "chat_template_kwargs": {"enable_thinking": False}}
-        return cls(client, model, ocr_model, extra)
+        return cls(client, model, ocr_model, {"top_k": 20, **thinking_off(str(client.base_url))})
 
     def ask(self, model: str, parts: list[dict]) -> str:
         response = self.client.chat.completions.create(
@@ -140,6 +162,9 @@ def read(reader: Reader, pages: list[Page]) -> tuple[dict, str | None, str]:
         how = "ocr"
     else:
         text, how = None, "vision"
+    if how != "text" and len(pages) > MAX_IMAGE_PAGES:
+        raise ToolError(f"that scan has {len(pages)} pages, more than the {MAX_IMAGE_PAGES} I can read at once; "
+                        "send the pages with the schedule and due dates, or the course's digital PDF")
     if text is not None:
         answer = reader.ask(reader.model, [{"type": "text", "text": f"{PROMPT}\n\nSYLLABUS:\n{text}"}])
     else:
@@ -407,11 +432,18 @@ def suggest(ctx: ToolContext, checked: Checked) -> list[str]:
     """Create one PENDING suggestion per item and per weekly class. Returns their ids."""
     ids = []
     for item in checked.items:
+        description = "From your syllabus" + (" (" + "; ".join(item["notes"]) + ")" if item["notes"] else "")
+        needs_check = any("please check" in n for n in item["notes"])
+        if item["kind"] == "deadline":  # a due date is a task, not a block of time on the calendar
+            change = {"name": item["title"], "due": item["start"].isoformat(), "kind": "deadline", "needs_check": needs_check,
+                      "source": "syllabus"}
+            kind = "CREATE_TASK"
+        else:
+            change = {"name": item["title"], "start": item["start"].isoformat(), "end": item["end"].isoformat(),
+                      "kind": "event", "needs_check": needs_check, "source": "syllabus"}
+            kind = "CREATE_EVENT"
         suggestion = ctx.store.add_suggestion(ctx.user_id, {
-            "type": "CREATE_EVENT", "target_id": None,
-            "description": "From your syllabus" + (" (" + "; ".join(item["notes"]) + ")" if item["notes"] else ""),
-            "proposed_change": {"name": item["title"], "start": item["start"].isoformat(), "end": item["end"].isoformat(),
-                                "kind": item["kind"], "needs_check": any("please check" in n for n in item["notes"])},
+            "type": kind, "target_id": None, "description": description, "proposed_change": change,
             "depends_on": [], "created_at": ctx.now.isoformat(), "expires_at": item["start"].isoformat(),
         })
         ids.append(suggestion["suggestion_id"])
@@ -422,10 +454,12 @@ def suggest(ctx: ToolContext, checked: Checked) -> list[str]:
         start = datetime.combine(first, datetime.strptime(m["start"], "%H:%M").time(), tzinfo=tz)
         end = datetime.combine(first, datetime.strptime(m["end"], "%H:%M").time(), tzinfo=tz)
         rule = f"FREQ=WEEKLY;BYDAY={','.join(RRULE_DAYS[d] for d in m['days'])};UNTIL={m['last_day']:%Y%m%d}"
+        if m["skip_dates"]:  # days without class (breaks), as an extension the app's calendar reads
+            rule += ";X-SKIP=" + ",".join(d.replace("-", "") for d in m["skip_dates"])
         suggestion = ctx.store.add_suggestion(ctx.user_id, {
             "type": "CREATE_EVENT", "target_id": None, "description": "Weekly class from your syllabus",
             "proposed_change": {"name": m["name"], "start": start.isoformat(), "end": end.isoformat(),
-                                "recurrence_rule": rule, "days": m["days"], "skip_dates": m["skip_dates"]},
+                                "recurrence_rule": rule, "days": m["days"], "skip_dates": m["skip_dates"], "source": "syllabus"},
             "depends_on": [], "created_at": ctx.now.isoformat(),
             "expires_at": datetime.combine(m["last_day"], datetime.max.time(), tzinfo=tz).isoformat(),
         })

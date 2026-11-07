@@ -64,3 +64,4 @@ ollama pull nomic-embed-text                  # the embedding model for long-ter
 8. `notes/memory.md`: long-term memory (Mem0)
 9. `notes/syllabus_import.md`: reading syllabus PDFs and photos, and adding many items at once
 10. `notes/evals_suite.md`: the eval suites (57 planning cases, 26 syllabi), how each case is proven valid, how to read the numbers
+11. `notes/team_test.md`: the team test: the website on GitHub Pages, the AI on RunPod (`deploy/runpod_app.sh`), the data in Supabase

@@ -120,3 +120,17 @@ def test_numbers_still_decide_between_two_items_on_one_day():
              {"title": "Quiz 1", "kind": "quiz", "date": "2027-02-03", "time": None}]
     s = eval_syllabus.score(truth, {"items": guess, "meetings": []})
     assert s["found"] == 2 and s["right_time"] == 1
+
+
+@pytest.mark.parametrize("truth_title,guess_title", [
+    ("Discussion post 1", "ISS 215 Week 1 discussion post"), ("Discussion replies 2", "Replies to classmates 2"),
+    ("Project 2", "CSE 335 Project 2"), ("Essay 1", "PSY 101 Essay 1"), ("Reflection journal 3", "Journal 3"),
+    ("Field notes 1", "ANTH 101 Field notes (Week 1)"), ("PS3", "Problem Set 3"), ("Lab 4", "Lab exercise 4")])
+def test_any_meaningful_shared_word_matches(truth_title, guess_title):
+    assert eval_syllabus.same_item({"title": truth_title, "kind": "assignment", "date": "2027-05-19"},
+                                   {"title": guess_title, "date": "2027-05-19"})
+
+
+def test_course_codes_and_numbering_words_alone_dont_match():
+    assert not eval_syllabus.same_item({"title": "Discussion post 1", "kind": "assignment", "date": "2027-05-19"},
+                                       {"title": "ISS 215 Week 1", "date": "2027-05-19"})

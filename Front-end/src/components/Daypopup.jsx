@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { describeRule } from "../lib/recurrence";
 
 const statusLabels = {
   NOT_STARTED: "Not Started",
@@ -109,8 +110,16 @@ function handleAdd() {
               <div key={event.event_id} className="item">
                 <strong>{event.name}</strong>
                 <p>{event.start_time} – {event.end_time}</p>
+                {event.repeats && <p>🔁 {describeRule(event.recurrence_rule)}</p>}
                 {!event.changeable && <p>🔒 Fixed</p>}
-                <button onClick={() => onDeleteEvent(event.event_id)}>Delete</button>
+                <button
+                  onClick={() =>
+                    (!event.repeats || window.confirm(`Delete "${event.name}" on every day it repeats?`)) &&
+                    onDeleteEvent(event.event_id)
+                  }
+                >
+                  {event.repeats ? "Delete every week" : "Delete"}
+                </button>
               </div>
             ))}
             {newFunction()}            

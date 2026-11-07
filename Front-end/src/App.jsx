@@ -5,6 +5,7 @@ import AIOverview from "./components/AIOverview";
 import ChatWidget from "./components/ChatWidget";
 import AuthForm from "./components/AuthForm";
 import MemoryPanel from "./components/MemoryPanel";
+import ProfilePanel, { profileIsEmpty } from "./components/ProfilePanel";
 import { ai } from "./lib/ai";
 import { mockAIOverview } from "./data/mockData";
 import { supabase } from "./lib/supabase";
@@ -16,6 +17,7 @@ import {
   deleteJournal,
   deleteTask,
   loadMonth,
+  loadProfile,
   saveJournal,
   updateTask,
 } from "./lib/data";
@@ -28,6 +30,8 @@ function App() {
   const [error, setError] = useState("");
   const [selectedDate, setSelectedDate] = useState(null);
   const [showMemories, setShowMemories] = useState(false);
+  const [profile, setProfile] = useState(null);
+  const [showProfile, setShowProfile] = useState(false);
 
   // Keep track of who is signed in.
   useEffect(() => {
@@ -49,6 +53,38 @@ function App() {
   useEffect(() => {
     if (session) reload();
   }, [session, reload]);
+
+  // The profile, once per sign-in. A new account is asked to fill it in (once; "Later" is remembered).
+  const userId = session?.user?.id;
+  useEffect(() => {
+    if (!userId) return;
+    loadProfile()
+      .then((p) => {
+        setProfile(p);
+        let later = false;
+        try {
+          later = localStorage.getItem(`steady.profileLater.${userId}`) === "1";
+        } catch {
+          // storage blocked: just ask again next time
+        }
+        if (profileIsEmpty(p) && !later) setShowProfile(true);
+      })
+      .catch((err) => setError(`Couldn't load your profile: ${err.message}`));
+  }, [userId]);
+
+  function closeProfile() {
+    setShowProfile(false);
+    try {
+      localStorage.setItem(`steady.profileLater.${userId}`, "1");
+    } catch {
+      // storage blocked: fine
+    }
+  }
+
+  // How many events and tasks each day has, for the dots on the month grid.
+  const marks = {};
+  for (const e of data.events) (marks[e.start_date] ??= { events: 0, tasks: 0 }).events += 1;
+  for (const t of data.tasks) (marks[t.date] ??= { events: 0, tasks: 0 }).tasks += 1;
 
   async function handleAddEvent(newEvent) {
     try {
@@ -140,6 +176,10 @@ function App() {
       <div className="app-header">
         <h1>Steady Planner</h1>
         <div>
+          <button className="link" onClick={() => setShowProfile(true)} disabled={!profile}>
+            {profile?.first_name ? `${profile.first_name}'s profile` : "Profile"}
+          </button>
+          {" · "}
           <button className="link" onClick={() => setShowMemories(true)}>What Steady remembers</button>
           {" · "}
           <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
@@ -155,6 +195,7 @@ function App() {
         onNext={() => changeMonth(1)}
         onDayClick={setSelectedDate}
         selectedDate={selectedDate}
+        marks={marks}
       />
       {selectedDate && (
         <DayPopup
@@ -173,6 +214,17 @@ function App() {
         />
       )}
       {showMemories && <MemoryPanel onClose={() => setShowMemories(false)} />}
+      {showProfile && profile && (
+        <ProfilePanel
+          profile={profile}
+          firstTime={profileIsEmpty(profile)}
+          onSaved={(saved) => {
+            setProfile(saved);
+            setShowProfile(false);
+          }}
+          onClose={closeProfile}
+        />
+      )}
       <ChatWidget events={data.events} onCalendarChanged={reload} />
     </div>
   );

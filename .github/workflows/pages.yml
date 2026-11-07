@@ -1,0 +1,65 @@
+# Build the website (Front-end/) and publish it on GitHub Pages: https://<owner>.github.io/<repo>/
+#
+# One-time setup (see ai/notes/team_test.md):
+# - Settings > Pages > Source: "GitHub Actions".
+# - Variables VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (the anon key is public by design; never the
+#   service_role key) and VITE_AI_API_URL (the RunPod URL), either on the github-pages environment
+#   (Settings > Environments > github-pages) or as repository variables (Settings > Secrets and variables).
+# - To publish from a branch other than main: Settings > Environments > github-pages > add the branch.
+# After changing a variable (e.g. a new pod URL), run this again: Actions > Publish website > Run workflow.
+name: Publish website
+
+on:
+  push:
+    branches: [main, ai]
+    paths: ["Front-end/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  # One job, inside the github-pages environment, so it can read that environment's variables.
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    defaults:
+      run:
+        working-directory: Front-end
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the settings were filled in
+        run: |
+          for name in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY VITE_AI_API_URL; do
+            [ -n "${!name}" ] || { echo "::error::Add the variable $name (Settings > Environments > github-pages)"; exit 1; }
+          done
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_AI_API_URL: ${{ vars.VITE_AI_API_URL }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: Front-end/package-lock.json
+      - run: npm ci
+      - run: npm run build
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_AI_API_URL: ${{ vars.VITE_AI_API_URL }}
+      - run: cp dist/index.html dist/404.html  # any unknown path opens the app instead of GitHub's 404
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: Front-end/dist
+      - id: deployment
+        uses: actions/deploy-pages@v4

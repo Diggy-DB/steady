@@ -2,7 +2,8 @@ import { dateString } from "../lib/data";
 
 // One month as a grid. The month to show and "today" now come from App (they used to be
 // fixed to October 2026), with buttons to move between months.
-function MonthCalendar({ year, month, today, onPrev, onNext, onDayClick, selectedDate }) {
+// `marks` gives each day's number of events and tasks ({"2027-01-22": {events: 1, tasks: 2}}), shown as dots.
+function MonthCalendar({ year, month, today, onPrev, onNext, onDayClick, selectedDate, marks = {} }) {
   const firstDayOfweek = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -35,6 +36,12 @@ function MonthCalendar({ year, month, today, onPrev, onNext, onDayClick, selecte
           return (
             <div key={index} className={className} onClick={() => day && onDayClick(date)}>
               {day}
+              {date && marks[date] && (
+                <div className="day-marks">
+                  {marks[date].events > 0 && <span className="mark event" title={`${marks[date].events} event(s)`} />}
+                  {marks[date].tasks > 0 && <span className="mark task" title={`${marks[date].tasks} task(s)`} />}
+                </div>
+              )}
             </div>
           );
         })}
