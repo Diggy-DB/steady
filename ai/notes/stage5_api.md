@@ -67,6 +67,50 @@ Response:
 The frontend's `ChatWidget` shows `reply` as a bubble and each suggestion as a card with
 **Accept** / **Decline**. Only those buttons change anything.
 
+The website uses `POST /chat/start` (same body; answers `202` with a `chat_id` at once) and then
+`GET /chat/jobs/{chat_id}` every couple of seconds until `status` is `done` (the same fields as above) or
+`failed` (`reply` says why). A long answer can then never hit a proxy's time limit.
+
+Suggestion types (`type`) and what accepting one does:
+
+| type | `proposed_change` | accepting it |
+|---|---|---|
+| `CREATE_EVENT` | `name`, `start`, `end` (and `recurrence_rule` for a weekly class) | adds a row to `calendar_events` |
+| `MOVE_EVENT` | `start`, `end`; the event is `target_id` | changes that event's times |
+| `CREATE_TASK` | `name`, `due` (a syllabus deadline) | adds a row to `tasks` |
+| `DELETE_EVENT` / `DELETE_TASK` | `what`, `id`, `name`, and the event's `start`/`end` or the task's `due` | deletes that row |
+| `DELETE_JOURNAL` | `what: "journal"`, `id` (the entry's date), `preview` | deletes that day's journal entry |
+| `ADD_JOURNAL` | `date`, `text`, `adds_to_existing` | adds `text` to that day's entry, or starts one |
+| `EDIT_JOURNAL` | `date`, `text` (the whole edited entry), `old` (the entry it was written from) | replaces that day's text; refused if the entry changed since (it never overwrites newer writing) |
+
+Deletes name what they delete in `proposed_change`, not in `target_id`: the database deletes a suggestion
+together with the event its `target_id` points to, so an accepted delete would erase its own record.
+Accept checks again first: a fixed (changeable: false) event or task, or one already gone, is refused (409).
+
+### `GET /overview` and `POST /overview/refresh`
+
+Today's overview of yesterday, for the box at the top of the app. Written once a day and saved
+(table `daily_overviews`); `refresh` writes it again, e.g. after the user writes yesterday's journal entry.
+
+```json
+{
+  "date": "2026-10-06", "looks_back_at": "2026-10-05", "written_by": "ai",
+  "headline": "You finished your grocery run and had a productive study session.",
+  "yesterday": "...", "compared": "Yesterday you finished 1 of 1 tasks due, planned 4.0 hours (before: 0.0 a day on average) and ...",
+  "suggestions": [{"kind": "schedule", "text": "Make time for the overdue MTH 133 problem set.",
+                   "ask": "Find 2 hours tomorrow morning for the MTH 133 problem set."}],
+  "quote": {"text": "Lost time is never found again.", "source": "Benjamin Franklin, Poor Richard's Almanack"},
+  "encouragement": "...",
+  "stats": [{"label": "Tasks done yesterday", "value": "1 of 1 (100%)", "before": "week before: 0 of 1 (0%)"}, "..."]
+}
+```
+
+`stats` and `compared` are counted and written by code, so their numbers are always right; the model writes
+`headline`, `yesterday`, `suggestions` and `encouragement` from those facts (one call, thinking off), and
+picks the quote from a fixed list with checked sources. If the model fails, code writes all of it
+(`written_by: "code"`). `ask` is a message the app can send to the chat ("Ask Steady"), where the agent
+turns it into suggestions to accept.
+
 ### `POST /syllabus` and `GET /syllabus/{id}`
 
 Upload a syllabus as `multipart/form-data` with one field, `file` (PDF, JPEG, PNG or WebP, at most 15 MB).

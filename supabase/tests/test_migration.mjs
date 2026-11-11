@@ -75,7 +75,10 @@ const db = new PGlite();
 await db.exec(SUPABASE_LIKE + DRAFTS);
 await db.exec(MIGRATION);
 const tables = (await db.query(`select string_agg(tablename, ', ' order by tablename) as t from pg_tables where schemaname = 'public'`)).rows[0].t;
-check("drafts replaced by the planned tables", tables === "activity_log, ai_suggestions, calendar_events, journals, tasks, users", tables);
+const planned = process.argv.length > 5  // the fourth migration adds daily_overviews
+  ? "activity_log, ai_suggestions, calendar_events, daily_overviews, journals, tasks, users"
+  : "activity_log, ai_suggestions, calendar_events, journals, tasks, users";
+check("drafts replaced by the planned tables", tables === planned, tables);
 
 // Sign-up creates the profile. Insert as Supabase Auth's own role, not as a superuser.
 await db.exec(`set role supabase_auth_admin`);
@@ -135,7 +138,46 @@ if (process.argv.length > 4) {
   check("a task suggestion has no target event", await fails(as(db, A, `insert into public.ai_suggestions (type, target_id, proposed_change)
     values ('CREATE_TASK', ${eventId}, '{}')`)));
   check("unknown suggestion types are still refused", await fails(as(db, A, `insert into public.ai_suggestions (type, proposed_change)
-    values ('DELETE_EVENT', '{}')`)));
+    values ('DROP_EVERYTHING', '{}')`)));
+}
+
+// Delete and journal suggestions, and daily overviews (fourth migration).
+if (process.argv.length > 5) {
+  for (const type of ["DELETE_EVENT", "DELETE_TASK", "DELETE_JOURNAL", "ADD_JOURNAL"]) {
+    const row = await as(db, A, `insert into public.ai_suggestions (type, proposed_change) values ('${type}', '{"what": "event", "id": "1"}')
+      returning suggestion_id`);
+    check(`a ${type} suggestion can be stored (no target_id)`, row.rows.length === 1);
+  }
+  check("a delete suggestion doesn't use target_id", await fails(as(db, A, `insert into public.ai_suggestions (type, target_id, proposed_change)
+    values ('DELETE_EVENT', ${eventId}, '{}')`)));
+  const del = await as(db, A, `insert into public.ai_suggestions (type, proposed_change)
+    values ('DELETE_EVENT', '{"what": "event", "id": "${eventId}"}') returning suggestion_id`);
+  await as(db, A, `delete from public.calendar_events where event_id = ${eventId}`);
+  check("an accepted delete keeps its suggestion (the record of the decision)",
+    (await as(db, A, `select * from public.ai_suggestions where suggestion_id = ${del.rows[0].suggestion_id}`)).rows.length === 1);
+
+  await as(db, A, `insert into public.daily_overviews (date, overview) values ('2026-10-06', '{"headline": "First"}')`);
+  check("one overview per day: a second insert is refused", await fails(as(db, A,
+    `insert into public.daily_overviews (date, overview) values ('2026-10-06', '{"headline": "Again"}')`)));
+  await as(db, A, `insert into public.daily_overviews (date, overview) values ('2026-10-06', '{"headline": "Second"}')
+    on conflict (user_id, date) do update set overview = excluded.overview`);
+  check("a refresh replaces the day's overview (upsert)",
+    (await as(db, A, `select overview->>'headline' as h from public.daily_overviews`)).rows[0].h === "Second");
+  check("another user can't see someone's overview", (await as(db, B, `select * from public.daily_overviews`)).rows.length === 0);
+  check("nobody can write an overview for someone else", await fails(as(db, B,
+    `insert into public.daily_overviews (user_id, date, overview) values ('${A}', '2026-10-07', '{}')`)));
+  await db.exec(`set role anon`);
+  check("signed-out visitors can't read overviews", await fails(db.query(`select * from public.daily_overviews`)));
+  await db.exec(`reset role`);
+}
+
+// Journal edits (fifth migration).
+if (process.argv.length > 6) {
+  const edit = await as(db, A, `insert into public.ai_suggestions (type, proposed_change)
+    values ('EDIT_JOURNAL', '{"date": "2026-10-04", "text": "New", "old": "Old"}') returning suggestion_id`);
+  check("an EDIT_JOURNAL suggestion can be stored", edit.rows.length === 1);
+  check("unknown types are still refused after it", await fails(as(db, A, `insert into public.ai_suggestions (type, proposed_change)
+    values ('REWRITE_EVERYTHING', '{}')`)));
 }
 
 // Activity log: append-only.

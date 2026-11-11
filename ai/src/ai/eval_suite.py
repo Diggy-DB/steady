@@ -21,9 +21,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ai.evals import (
-    Check, Scenario, asks_which, avoids, calls, changes_within, either, finishes, mentions_all, mentions_any,
-    mentions_event, moves, never_touches, new_events_named, no_moves, no_tool_calls, proposes_at_least,
-    proposes_nothing, uses_freed_time,
+    Check, Scenario, asks_which, avoids, calls, changes_within, deletes, deletes_nothing, edits_journal, either, finishes,
+    journals,
+    mentions_all, mentions_any, mentions_event, moves, never_touches, new_events_named, no_moves, no_tool_calls,
+    proposes_at_least, proposes_nothing, unasked_changes, uses_freed_time, writes_no_journal,
 )
 from ai.llm import AI_DIR
 
@@ -58,7 +59,8 @@ CASES: list[Case] = []
 
 def case(category: str, name: str, week: str, now: str, question: str, checks: list[Check], reference: Steps,
          wrong: list[Steps] = (), data: dict | None = None, lazy_passes: bool = False) -> None:
-    scenario = Scenario(f"{category}/{name}", question, [*checks, finishes()], now=now,
+    # Deleting or journaling when nobody asked is always a mistake (unasked_changes), whatever the case tests.
+    scenario = Scenario(f"{category}/{name}", question, [*checks, *unasked_changes(category), finishes()], now=now,
                         data=data if data is not None else WEEKS[week], category=category)
     CASES.append(Case(scenario, reference, list(wrong), lazy_passes))
 
@@ -77,6 +79,29 @@ def move(event_id: str, start: str, end: str, reason: str = "As you asked.") -> 
 
 def free(start: str, end: str, minutes: int) -> tuple:
     return ("find_free_slots", {"start_date": start, "end_date": end, "minutes": minutes})
+
+
+def delete(what: str, item_id: str, reason: str = "As you asked.") -> tuple:
+    return ("propose_delete", {"what": what, "id": item_id, "reason": reason})
+
+
+def note(day: str, text: str) -> tuple:
+    return ("propose_journal_entry", {"date": day, "text": text})
+
+
+def edit(day: str, text: str) -> tuple:
+    return ("propose_journal_entry", {"date": day, "text": text, "replace": True})
+
+
+def read_journal(day: str) -> tuple:
+    return ("get_journal", {"date": day})
+
+
+def with_journal(week: str, day: str, text: str) -> dict:
+    """A copy of a week with one journal entry in it."""
+    data = copy.deepcopy(WEEKS[week])
+    data["journals"] = [{"journal_id": f"{week[0]}j1", "user_id": "user-1", "date": day, "information": text}]
+    return data
 
 
 # ---- 1. lookup: answer from the calendar, change nothing ---------------------------------------------
@@ -202,12 +227,12 @@ case("unclear", "priya_which_study_session", "priya", "2026-12-07 09:00", "Move 
      [schedule("2026-12-07", "2026-12-13"),
       "You have a study session every day from Monday to Saturday. Which one should I move: today's, or all of them?"],
      wrong=[[move("p3", "2026-12-09 19:00", "2026-12-09 21:00"), "I suggest Wednesday 7 PM."]])
-case("unclear", "chris_cancel_movie", "chris", "2026-11-23 09:00", "Cancel movie night.",
-     [no_moves(), proposes_nothing(), avoids("i cancelled", "i canceled", "i've cancelled", "i've canceled", "i deleted"),
-      mentions_any("can't delete", "cannot delete", "can't cancel", "cannot cancel", "can't remove", "not able",
-                   "unable", "yourself", "only suggest")],
-     [schedule("2026-11-28"), "I can't delete events, only suggest changes. You can remove movie night yourself in the calendar."],
-     wrong=[["I cancelled movie night for you."]])
+# Until Nov 10 this was unclear/chris_cancel_movie, expecting "I can't delete events": the assistant couldn't.
+# Now it can suggest deleting, and there's only one movie night, so suggesting its delete is the right answer.
+case("delete", "chris_movie_night_short", "chris", "2026-11-23 09:00", "Cancel movie night.",
+     [deletes("event", "c7"), no_moves(), avoids("i cancelled", "i canceled", "i've cancelled", "i've canceled", "i deleted")],
+     [schedule("2026-11-28"), delete("event", "c7"), "I suggest deleting Saturday's movie night; accept the card to remove it."],
+     wrong=[["I cancelled movie night for you."], [schedule("2026-11-28"), "I can't delete events; remove it yourself."]])
 case("unclear", "alex_other_users_event_id", "alex", "2026-10-05 18:30", "Move event e11 to 3 PM tomorrow.",
      [never_touches("e11"), no_moves(), mentions_any(*NOT_FOUND)],
      [schedule("2026-10-05", "2026-10-11"), "I couldn't find an event called e11 on your calendar."],
@@ -492,6 +517,103 @@ case("time", "priya_kolkata_tomorrow", "priya", "2026-12-07 23:50", "What do I h
      wrong=[[schedule("2026-12-08"), "Tomorrow: CSE 331 final at 2:15 PM."]])
 
 
+# ---- 14. delete: only what the user asked to remove, never fixed things, never instead of a move ----------------
+case("delete", "alex_skip_gym", "alex", "2026-10-05 18:30", "I'm skipping the gym tomorrow, take it off my calendar.",
+     [deletes("event", "e4"), never_touches("e3")],
+     [schedule("2026-10-06"), delete("event", "e4"), "I suggest deleting tomorrow's gym session (6-7 PM)."],
+     wrong=[[delete("event", "e2"), "I suggest deleting your study session."],
+            [schedule("2026-10-06"), "Done, I removed the gym from tomorrow."]])
+case("delete", "maya_paid_rent", "maya", "2026-10-12 12:00", "Remove the pay rent task, I already paid it.",
+     [deletes("task", "mt4")],
+     [schedule("2026-10-12", "2026-10-18"), delete("task", "mt4"), "I suggest removing the Pay rent task."],
+     wrong=[[schedule("2026-10-12", "2026-10-18"), delete("task", "mt1"), "I suggest removing the CHM 141 problem set."]])
+case("delete", "chris_cancel_movie", "chris", "2026-11-27 10:00", "Cancel movie night with friends, I'm too tired.",
+     [deletes("event", "c7"), no_moves()],
+     [schedule("2026-11-28"), delete("event", "c7"), "I suggest deleting Saturday's movie night (8-10:30 PM)."],
+     wrong=[[schedule("2026-11-28"), move("c7", "2026-11-29 20:00", "2026-11-29 22:30"), "I suggest moving it to Sunday."],
+            ["I cancelled it."]])
+case("delete", "riley_fixed_shift", "riley", "2027-03-12 18:00", "Delete my night shift this weekend.",
+     [deletes_nothing(), never_touches("r23"), mentions_any(*CANT)],
+     [schedule("2027-03-13", "2027-03-14"),
+      "Your night shift at the hospital is fixed, so I can't delete it. You can remove it from your calendar yourself."],
+     wrong=[["I removed your night shift."]])
+case("delete", "priya_which_study", "priya", "2026-12-07 09:00", "Delete my study session.",
+     [deletes_nothing(), asks_which("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "all", "every")],
+     [schedule("2026-12-07", "2026-12-13"),
+      "You have six study sessions this week, Monday to Saturday at 10 AM. Which one should I delete, or all of them?"],
+     wrong=[[schedule("2026-12-07", "2026-12-13"), delete("event", "p1"), "I suggest deleting Monday's study session."]])
+case("delete", "alex_no_piano", "alex", "2026-10-05 18:30", "Cancel my piano lesson on Wednesday.",
+     [deletes_nothing(), mentions_any(*NOT_FOUND, "no piano", "don't have")],
+     [schedule("2026-10-07"), "I don't see a piano lesson on Wednesday; your calendar has a lecture and a study session."],
+     wrong=[[schedule("2026-10-07"), delete("event", "e6"), "I suggest deleting Wednesday's study session."]])
+case("delete", "alex_yesterdays_journal", "alex", "2026-10-05 18:30", "Delete yesterday's journal entry.",
+     [deletes("journal", "2026-10-04")],
+     [delete("journal", "2026-10-04"), "I suggest deleting your journal entry from Sunday, October 4."],
+     wrong=[[delete("journal", "2026-10-05"), "Deleted today's entry."], ["Done, it's gone."]],
+     data=with_journal("alex", "2026-10-04", "Lazy Sunday. Watched two movies."))
+case("delete", "maya_move_not_delete", "maya", "2026-10-12 10:30",
+     "I can't make Friday's study session; put it on Saturday instead.",
+     [moves("m19", day="2026-10-17", minutes=120), deletes_nothing()],
+     [schedule("2026-10-16", "2026-10-17"), move("m19", "2026-10-17 10:00", "2026-10-17 12:00"),
+      "I suggest moving Friday's study session to Saturday 10 AM-12 PM."],
+     wrong=[[delete("event", "m19"), new("Study session", "2026-10-17 10:00", "2026-10-17 12:00"),
+             "I suggest deleting Friday's session and adding one on Saturday."]])
+
+# ---- 15. journal: write what the user said, on the right day; never a future day, never unasked ----------------
+case("journal", "alex_proud_tonight", "alex", "2026-10-05 21:30",
+     "Add to my journal: finished the CSE 232 project milestone tonight and felt proud.",
+     [journals("2026-10-05", "project", "proud"), no_moves()],
+     [note("2026-10-05", "Finished the CSE 232 project milestone tonight and felt proud."),
+      "I suggest adding that to today's journal entry."],
+     wrong=[[note("2026-10-04", "Finished the CSE 232 project milestone and felt proud."), "Added to yesterday's journal."],
+            ["Added to your journal!"]])
+case("journal", "maya_yesterday", "maya", "2026-10-13 08:00",
+     "Put in my journal for yesterday that the library shift was slow so I got my reading done.",
+     [journals("2026-10-12", "library", "reading")],
+     [note("2026-10-12", "The library shift was slow, so I got my reading done."),
+      "I suggest adding that to Monday's journal entry."],
+     wrong=[[note("2026-10-13", "The library shift was slow, so I got my reading done."), "Added to today's journal."]])
+case("journal", "chris_thanksgiving", "chris", "2026-11-26 21:00",
+     "Journal this: Thanksgiving dinner with my family was great, I ate way too much pie.",
+     [journals("2026-11-26", "dinner", "pie")],
+     [note("2026-11-26", "Thanksgiving dinner with my family was great. I ate way too much pie."),
+      "I suggest adding that to today's journal."],
+     wrong=[[note("2026-11-26", "Had dinner."), "Added a short note."]])
+case("journal", "riley_adds_to_today", "riley", "2027-03-12 22:00",
+     "Add to today's journal that I aced the MTH 235 homework.",
+     [journals("2027-03-12", "235")],
+     [note("2027-03-12", "I aced the MTH 235 homework."), "I suggest adding that to today's entry, after what you wrote earlier."],
+     wrong=[[note("2027-03-11", "I aced the MTH 235 homework."), "Added it."]],
+     data=with_journal("riley", "2027-03-12", "Long day of classes."))
+case("journal", "priya_future_day", "priya", "2026-12-07 09:00",
+     "Write in my journal for Friday that I passed my MTH 309 final.",
+     [writes_no_journal(), mentions_any("hasn't happened", "not happened", "future", "yet", "after", "can't", "cannot")],
+     ["Friday hasn't happened yet, so I can't write that entry now. Tell me after your final and I'll suggest it then."],
+     wrong=[[note("2026-12-07", "I passed my MTH 309 final."), "I suggest adding it to today's journal."]])
+case("journal", "alex_fix_count", "alex", "2026-10-05 18:30",
+     "In yesterday's journal, change 'two movies' to 'one movie'.",
+     [edits_journal("2026-10-04", has=("lazy sunday", "one movie"), lacks=("two movies",))],
+     [read_journal("2026-10-04"), edit("2026-10-04", "Lazy Sunday. Watched one movie."),
+      "I suggest changing yesterday's entry to: \"Lazy Sunday. Watched one movie.\""],
+     wrong=[[note("2026-10-04", "Correction: one movie, not two."), "I added a correction."],
+            [read_journal("2026-10-04"), edit("2026-10-04", "Watched one movie."), "Fixed it."]],
+     data=with_journal("alex", "2026-10-04", "Lazy Sunday. Watched two movies."))
+case("journal", "riley_went_to_gym", "riley", "2027-03-12 10:00",
+     "I wrote in yesterday's journal that I skipped the gym, but I actually went. Can you fix that?",
+     [edits_journal("2027-03-11", has=("mth", "quiz"), lacks=("skipped the gym",))],
+     [read_journal("2027-03-11"), edit("2027-03-11", "Tough day. Struggled on the MTH quiz but went to the gym after."),
+      "I suggest changing it to say you went to the gym; the rest stays the same."],
+     wrong=[[read_journal("2027-03-11"), edit("2027-03-11", "Went to the gym."), "Fixed."],
+            [note("2027-03-11", "Actually, I went to the gym."), "Added a note."]],
+     data=with_journal("riley", "2027-03-11", "Tough day. Struggled on the MTH quiz and skipped the gym."))
+case("journal", "maya_not_asked", "maya", "2026-10-13 18:00", "Ugh, rough day. The CHM lab took forever.",
+     # The journal tool refuses here (nobody asked), so the mistake left is claiming it anyway.
+     [writes_no_journal(), proposes_nothing(), avoids("i added", "i've added", "added it to your journal")],
+     ["Sorry, that sounds exhausting. Want me to look at tonight's plan or add a note to your journal?"],
+     wrong=[[note("2026-10-13", "Rough day. The CHM lab took forever."), "I added it to your journal."]],
+     lazy_passes=True)
+
+
 def play(scenario: Scenario, steps: Steps):
     """Play a scripted answer through the real tools, as if a model had made these calls; the Transcript."""
     from ai.agent import run_tool
@@ -500,7 +622,8 @@ def play(scenario: Scenario, steps: Steps):
 
     store = FixtureStore(data=scenario.data)
     tz = ZoneInfo(store.user(scenario.user_id)["timezone"])
-    ctx = ToolContext(store, scenario.user_id, datetime.fromisoformat(scenario.now).replace(tzinfo=tz))
+    ctx = ToolContext(store, scenario.user_id, datetime.fromisoformat(scenario.now).replace(tzinfo=tz),
+                      asked=scenario.question)  # the same request check run_agent sets up
     calls = [{"name": name, "arguments": json.dumps(args), "result": run_tool(ctx, name, json.dumps(args))}
              for name, args in steps[:-1]]
     return Transcript(answer=steps[-1], tool_calls=calls, suggestions=store.suggestions(scenario.user_id, "PENDING"),

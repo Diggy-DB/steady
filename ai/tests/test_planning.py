@@ -108,8 +108,9 @@ def test_cannot_move_an_event_that_is_over():
         propose_move_event(ctx, "e2", "2026-10-07 16:00", "2026-10-07 18:00", "")
 
 
-def test_agent_offers_all_four_tools():
-    assert set(TOOLS) == {"get_schedule", "find_free_slots", "propose_new_event", "propose_move_event"}
+def test_agent_offers_all_seven_tools():
+    assert set(TOOLS) == {"get_schedule", "find_free_slots", "propose_new_event", "propose_move_event",
+                          "propose_delete", "get_journal", "propose_journal_entry"}
 
 
 def test_free_slots_leave_out_full_days():

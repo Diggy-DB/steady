@@ -73,7 +73,14 @@ build kernels (`ninja`); and vLLM's default of hundreds of requests at once is r
    deadlines become tasks (with the due time in the description), exams and in-class quizzes become events,
    lectures become one weekly card that skips breaks. Cards with ⚠ are dates the code wasn't sure about.
    Try "Accept all", then look at the calendar (dots mark days with events and tasks).
-6. **Write down** anything wrong: the question or file, what it did, what it should have done. Wrong dates
+6. **Daily overview** (top of the page, from the second day on): does it describe yesterday correctly
+   (tasks, calendar, your journal)? Are the suggestions sensible? Try "Ask Steady →" on one, and "Refresh"
+   after writing yesterday's journal entry. Anything it says that isn't true is the most useful report.
+7. **Journal and deletes** in the chat: "Add to my journal: ...", "In yesterday's journal, change X to Y"
+   (the card shows before and after), "Delete my gym session on Friday",
+   "Remove the X task". It should only ever suggest (red cards for deletes, with Delete / Keep it), refuse
+   fixed events, and never delete something when you asked to move it.
+8. **Write down** anything wrong: the question or file, what it did, what it should have done. Wrong dates
    from syllabi are the most useful reports.
 
 ## Known limits

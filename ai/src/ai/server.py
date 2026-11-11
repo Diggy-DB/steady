@@ -1,6 +1,10 @@
 """HTTP API for the planning assistant, for the backend and frontend to call.
 
     POST /chat                          ask a question; returns the reply and any new suggestions
+    POST /chat/start                    the same, in the background (for the website): returns a chat id
+    GET  /chat/jobs/{id}                that chat: still thinking, or the reply and suggestions
+    GET  /overview                      today's overview of yesterday (written once a day, then saved)
+    POST /overview/refresh              write today's overview again (e.g. after a new journal entry)
     POST /syllabus                      upload a syllabus (PDF or photo); starts reading it, returns an import id
     GET  /syllabus/{id}                 the import: still reading, or the reply and the suggestions it made
     GET  /suggestions                   the user's pending suggestions
@@ -32,6 +36,7 @@ import os
 import secrets
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Literal
@@ -48,6 +53,7 @@ from ai import agent, syllabus
 from ai.agent import run_agent
 from ai.llm import AI_DIR, load_settings, make_client, thinking_off
 from ai.memory import UserMemory, build_user_memory
+from ai.overview import daily_overview
 from ai.planning import recheck
 from ai.schedule import FixtureStore, ToolContext, ToolError
 from ai.supabase_store import SupabaseStore
@@ -69,6 +75,20 @@ if STORE == "supabase" and not (SUPABASE_URL and SUPABASE_ANON_KEY):
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
 
 app = FastAPI(title="Steady Planner AI")
+
+
+# Any unexpected crash becomes a JSON error the page can show, and its traceback goes to the log. This is
+# registered before CORS so CORS wraps it: a crash answered outside CORS has no CORS headers, and the
+# browser then only says "Failed to fetch" ("Can't reach the AI server").
+@app.middleware("http")
+async def errors_as_json(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as error:
+        traceback.print_exc()
+        return JSONResponse(status_code=500, content={"detail": f"The AI server hit an error ({type(error).__name__}: {error})"})
+
+
 app.add_middleware(
     CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["Authorization", "Content-Type", "X-User-Id"]
 )
@@ -88,11 +108,13 @@ if os.getenv("MEMORY", "on") != "off":
 # lose the CORS headers, and the browser would only say "Failed to fetch".
 @app.exception_handler(openai.APIError)
 def model_unavailable(request: Request, error: openai.APIError) -> JSONResponse:
+    print(f"Model error on {request.url.path}: {error!r}")
     return JSONResponse(status_code=502, content={"detail": f"The AI model isn't available right now: {error.message}"})
 
 
 @app.exception_handler(httpx.HTTPError)
 def database_unavailable(request: Request, error: httpx.HTTPError) -> JSONResponse:
+    print(f"Database error on {request.url.path}: {error!r}")
     return JSONResponse(status_code=502, content={"detail": f"The database request failed: {error}"})
 
 
@@ -161,17 +183,95 @@ def health() -> dict:
     return {"ok": True, "store": STORE, "model": settings.model, "memory": memory is not None}
 
 
-@app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, background: BackgroundTasks, ctx: ToolContext = Depends(context)) -> ChatResponse:
+def answer(request: ChatRequest, ctx: ToolContext) -> ChatResponse:
+    """Run the agent on one message; the reply and the suggestions it made."""
     before = {s["suggestion_id"] for s in ctx.store.suggestions(ctx.user_id)}
     history = [turn.model_dump() for turn in request.history]
     memories = recall(ctx.user_id, request.message)
     result = run_agent(llm, settings.model, ctx, request.message, verbose=False, history=history, memories=memories,
                        profile=ctx.store.user(ctx.user_id))
     new = [s for s in ctx.store.suggestions(ctx.user_id) if s["suggestion_id"] not in before]
-    if memory:  # learn from this turn after the reply has been sent, so the user doesn't wait for it
-        background.add_task(learn, memory.remember_chat, ctx.user_id, request.message, result["answer"])
     return ChatResponse(reply=result["answer"], suggestions=new, run_id=result["run_id"], memories_used=memories)
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(request: ChatRequest, background: BackgroundTasks, ctx: ToolContext = Depends(context)) -> ChatResponse:
+    response = answer(request, ctx)
+    if memory:  # learn from this turn after the reply has been sent, so the user doesn't wait for it
+        background.add_task(learn, memory.remember_chat, ctx.user_id, request.message, response.reply)
+    return response
+
+
+# ---- Chat in the background ----
+# Most answers take seconds, but a long plan (or a model that thinks for a long time) can take longer than
+# RunPod's proxy waits for one request (about 100 s); the browser then sees no answer at all. So the
+# website starts a chat with POST /chat/start and asks GET /chat/jobs/{id} until it's done.
+
+chats: dict[str, dict] = {}  # chat id -> {"user_id", "status", "response", "reply", "started", "seconds"}
+chats_lock = threading.Lock()
+chat_pool = ThreadPoolExecutor(max_workers=int(os.getenv("CHAT_WORKERS", "8")))
+
+
+class ChatJob(BaseModel):
+    chat_id: str
+    status: Literal["thinking", "done", "failed"]
+    reply: str = ""
+    suggestions: list[dict] = []
+    run_id: str = ""
+    memories_used: list[str] = []
+    seconds: float = 0
+
+
+def run_chat(chat_id: str, request: ChatRequest, ctx: ToolContext) -> None:
+    """Answer in a worker thread. Errors become a reply (and a traceback in the log), never a lost request."""
+    job = chats[chat_id]
+    try:
+        response = answer(request, ctx)
+        job.update(status="done", response=response)
+        if memory:
+            learn(memory.remember_chat, ctx.user_id, request.message, response.reply)
+    except openai.APIError as error:
+        print(f"Model error in chat {chat_id}: {error!r}")
+        job.update(status="failed", reply=f"Sorry, the AI model isn't available right now ({error.message}). Try again in a minute.")
+    except httpx.HTTPError as error:
+        print(f"Database error in chat {chat_id}: {error!r}")
+        job.update(status="failed", reply="Sorry, I couldn't read your calendar just now. Try again, or sign out and back in.")
+    except Exception:
+        print(f"Chat {chat_id} failed:")
+        traceback.print_exc()
+        job.update(status="failed", reply="Sorry, something went wrong on my side. Try asking again.")
+    job["seconds"] = round(time.time() - job["started"], 1)
+
+
+@app.post("/chat/start", response_model=ChatJob, status_code=202)
+def start_chat(request: ChatRequest, ctx: ToolContext = Depends(context)) -> ChatJob:
+    with chats_lock:
+        if any(j["user_id"] == ctx.user_id and j["status"] == "thinking" for j in chats.values()):
+            raise HTTPException(429, "I'm still answering your last message; wait for it to finish")
+        chat_id = secrets.token_urlsafe(9)
+        chats[chat_id] = {"user_id": ctx.user_id, "status": "thinking", "response": None, "reply": "",
+                          "started": time.time(), "seconds": 0}
+        for old in [i for i, j in chats.items() if time.time() - j["started"] > 6 * 3600]:
+            del chats[old]  # forget chats from hours ago
+    chat_pool.submit(run_chat, chat_id, request, ctx)
+    return ChatJob(chat_id=chat_id, status="thinking")
+
+
+@app.get("/chat/jobs/{chat_id}", response_model=ChatJob)
+def chat_status(chat_id: str, ctx: ToolContext = Depends(context)) -> ChatJob:
+    job = chats.get(chat_id)
+    if job is None or job["user_id"] != ctx.user_id:  # someone else's chat counts as not found
+        raise HTTPException(404, f"no chat {chat_id}")
+    if job["status"] == "thinking":
+        return ChatJob(chat_id=chat_id, status="thinking", seconds=round(time.time() - job["started"], 1))
+    if job["status"] == "failed":
+        return ChatJob(chat_id=chat_id, status="failed", reply=job["reply"], seconds=job["seconds"])
+    r = job["response"]
+    # Suggestions as they are now (one may have been accepted already in another tab).
+    ids = {s["suggestion_id"] for s in r.suggestions}
+    now = [s for s in ctx.store.suggestions(ctx.user_id) if s["suggestion_id"] in ids] if ids else []
+    return ChatJob(chat_id=chat_id, status="done", reply=r.reply, suggestions=now, run_id=r.run_id,
+                   memories_used=r.memories_used, seconds=job["seconds"])
 
 
 # ---- Syllabus import ----
@@ -316,6 +416,16 @@ def learn(action, *args) -> None:
         action(*args)
     except Exception as error:
         print(f"Memory update failed: {error}")
+
+
+@app.get("/overview")
+def overview(ctx: ToolContext = Depends(context)) -> dict:
+    return daily_overview(ctx, llm, settings.model)
+
+
+@app.post("/overview/refresh")
+def refresh_overview(ctx: ToolContext = Depends(context)) -> dict:
+    return daily_overview(ctx, llm, settings.model, refresh=True)
 
 
 @app.get("/suggestions")

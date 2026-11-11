@@ -33,6 +33,7 @@ class FixtureStore:
         self.data = copy.deepcopy(data) if data is not None else json.loads(path.read_text(encoding="utf-8"))
         self._suggestions: list[dict] = []
         self.activity: list[dict] = []
+        self._overviews: dict[tuple[str, str], dict] = {}
 
     def user(self, user_id: str) -> dict:
         for user in self.data["users"]:
@@ -61,12 +62,32 @@ class FixtureStore:
             if t["user_id"] == user_id and first_day <= date.fromisoformat(t["due"]) <= last_day
         ]
 
+    def task(self, user_id: str, task_id: str) -> dict | None:
+        """One of this user's tasks by id, or None."""
+        return next((t for t in self.data["tasks"] if t["user_id"] == user_id and t["task_id"] == task_id), None)
+
     def journal(self, user_id: str, journal_id: str) -> dict | None:
         """One of this user's journal entries by id, or None (the fake week has none unless a test adds them)."""
         for j in self.data.get("journals", []):
             if j["user_id"] == user_id and str(j["journal_id"]) == str(journal_id):
                 return j
         return None
+
+    def journal_on(self, user_id: str, day: date) -> dict | None:
+        """This user's journal entry for one day (there's at most one), or None."""
+        return next((j for j in self.data.get("journals", []) if j["user_id"] == user_id and j["date"] == day.isoformat()), None)
+
+    def journals(self, user_id: str, first_day: date, last_day: date) -> list[dict]:
+        """This user's journal entries between two days (inclusive), earliest first."""
+        return sorted((j for j in self.data.get("journals", []) if j["user_id"] == user_id
+                       and first_day.isoformat() <= j["date"] <= last_day.isoformat()), key=lambda j: j["date"])
+
+    def overview(self, user_id: str, day: date) -> dict | None:
+        """The daily overview already written for this day, or None."""
+        return self._overviews.get((user_id, day.isoformat()))
+
+    def save_overview(self, user_id: str, day: date, overview: dict) -> None:
+        self._overviews[(user_id, day.isoformat())] = overview
 
     def suggestions(self, user_id: str, status: str | None = None) -> list[dict]:
         """This user's suggestions, optionally only those with one status (e.g. "PENDING")."""
@@ -115,6 +136,32 @@ class FixtureStore:
         elif suggestion["type"] == "MOVE_EVENT":
             event = self.event(suggestion["user_id"], suggestion["target_id"])
             event["start"], event["end"] = change["start"], change["end"]
+        elif suggestion["type"] in ("DELETE_EVENT", "DELETE_TASK", "DELETE_JOURNAL"):
+            table, key = {"DELETE_EVENT": ("events", "event_id"), "DELETE_TASK": ("tasks", "task_id"),
+                          "DELETE_JOURNAL": ("journals", "date")}[suggestion["type"]]
+            rows = self.data.get(table, [])
+            keep = [r for r in rows if not (r["user_id"] == suggestion["user_id"] and str(r[key]) == change["id"])]
+            if len(keep) == len(rows):
+                raise LookupError(f"suggestion {suggestion['suggestion_id']} couldn't be applied: it's already gone")
+            self.data[table] = keep
+        elif suggestion["type"] == "EDIT_JOURNAL":
+            entry = self.journal_on(suggestion["user_id"], date.fromisoformat(change["date"]))
+            if entry is None:
+                raise LookupError(f"suggestion {suggestion['suggestion_id']} couldn't be applied: the entry is gone")
+            entry["information"] = change["text"]
+        elif suggestion["type"] == "ADD_JOURNAL":
+            entry = self.journal_on(suggestion["user_id"], date.fromisoformat(change["date"]))
+            if entry:
+                entry["information"] = journal_text(entry["information"], change["text"])
+            else:
+                journals = self.data.setdefault("journals", [])
+                journals.append({"journal_id": f"ai-{suggestion['suggestion_id']}", "user_id": suggestion["user_id"],
+                                 "date": change["date"], "information": change["text"]})
+
+
+def journal_text(existing: str, addition: str) -> str:
+    """A journal entry with the AI's text added at the end, as its own paragraph."""
+    return f"{existing.rstrip()}\n\n{addition}" if existing.strip() else addition
 
 
 def task_description(due: datetime) -> str:
@@ -129,6 +176,9 @@ class ToolContext:
     store: FixtureStore
     user_id: str
     now: datetime  # must include a time zone
+    # What the user asked (plus Steady's previous reply, for "yes, do it"): deleting and journaling need the
+    # user to have asked for it in so many words. None means no such check (code calling tools directly).
+    asked: str | None = None
 
 
 def overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:

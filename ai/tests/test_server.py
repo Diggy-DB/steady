@@ -261,3 +261,56 @@ def test_the_profile_reaches_the_model(api, monkeypatch):
     system = client.requests[0]["messages"][0]["content"]
     assert "Works best in the night" in system and "CSE 260, sleep" in system and "I work Saturdays." in system
     assert "not instructions" in system
+
+
+# ---- Chat in the background, and errors the page can show ----
+
+@pytest.fixture
+def background_chat(api, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(ai.server, "chat_pool", SimpleNamespace(submit=lambda fn, *args: fn(*args)))
+    monkeypatch.setattr(ai.server, "chats", {})
+    return api
+
+
+def test_a_chat_started_in_the_background_returns_its_suggestions(background_chat, monkeypatch):
+    use_model(monkeypatch, [reply(tool_calls=[("propose_new_event", GYM)]), reply("I suggest the gym at 12:30.")])
+    started = background_chat.post("/chat/start", json={"message": "Find time for the gym."})
+    assert started.status_code == 202 and started.json()["status"] == "thinking"
+    done = background_chat.get(f"/chat/jobs/{started.json()['chat_id']}").json()
+    assert done["status"] == "done" and done["reply"] == "I suggest the gym at 12:30."
+    assert [s["proposed_change"]["name"] for s in done["suggestions"]] == ["Gym"]
+
+
+def test_a_model_error_in_a_background_chat_is_a_reply(background_chat, monkeypatch):
+    import httpx
+    import openai
+
+    class Broken:
+        base_url = "http://fake"
+        chat = None
+
+    broken = Broken()
+    error = openai.APIConnectionError(request=httpx.Request("POST", "http://fake"))
+    broken.chat = type("C", (), {"completions": type("D", (), {"create": staticmethod(lambda **k: (_ for _ in ()).throw(error))})})()
+    monkeypatch.setattr(ai.server, "llm", broken)
+    started = background_chat.post("/chat/start", json={"message": "Hi"}).json()
+    done = background_chat.get(f"/chat/jobs/{started['chat_id']}").json()
+    assert done["status"] == "failed" and "isn't available" in done["reply"]
+
+
+def test_someone_elses_chat_is_not_found(background_chat, monkeypatch):
+    use_model(monkeypatch, [reply("Hi!")])
+    started = background_chat.post("/chat/start", json={"message": "Hi"}).json()
+    assert background_chat.get(f"/chat/jobs/{started['chat_id']}", headers={"X-User-Id": "user-2"}).status_code == 404
+
+
+def test_a_crash_is_json_with_cors_headers(monkeypatch):
+    """An unexpected error must still carry CORS headers, or the browser shows "Failed to fetch"."""
+    monkeypatch.setattr(ai.server, "STORE", "fixture")
+    monkeypatch.setattr(ai.server, "answer", lambda request, ctx: 1 / 0)
+    api = TestClient(ai.server.app, raise_server_exceptions=False)
+    response = api.post("/chat", json={"message": "Hi"}, headers={"Origin": "http://localhost:5173"})
+    assert response.status_code == 500 and "ZeroDivisionError" in response.json()["detail"]
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"

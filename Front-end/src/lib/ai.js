@@ -33,7 +33,14 @@ async function call(path, { method = "POST", body, form } = {}) {
 export const ai = {
   // history: earlier turns as {role: "user" | "assistant", content}, final answers only.
   chat: (message, history) => call("/chat", { body: { message, history } }),
+  // The same in the background: start it, then ask for it until it's done (a long answer can't time out).
+  startChat: (message, history) => call("/chat/start", { body: { message, history } }),
+  chatJob: (chatId) => call(`/chat/jobs/${chatId}`, { method: "GET" }),
   accept: (suggestionId) => call(`/suggestions/${suggestionId}/accept`),
+
+  // The daily overview of yesterday: written once a day (then saved), or again on refresh.
+  overview: () => call("/overview", { method: "GET" }),
+  refreshOverview: () => call("/overview/refresh"),
 
   // Syllabus import: upload starts reading the file; ask for the result until it's done.
   uploadSyllabus: (file) => {

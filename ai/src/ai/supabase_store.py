@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from ai.recurrence import occurrences
-from ai.schedule import task_description
+from ai.schedule import journal_text, task_description
 
 
 class SupabaseStore:
@@ -74,6 +74,8 @@ class SupabaseStore:
         return sorted(found, key=lambda e: datetime.fromisoformat(e["start"]))
 
     def event(self, user_id: str, event_id: str) -> dict | None:
+        if not str(event_id).isdigit():  # event ids are numbers in the database; "e2" would be a database error
+            return None
         rows = self._get("calendar_events", [("user_id", f"eq.{user_id}"), ("event_id", f"eq.{event_id}")])
         if not rows:
             return None
@@ -85,22 +87,38 @@ class SupabaseStore:
             "tasks",
             [("user_id", f"eq.{user_id}"), ("date", f"gte.{first_day.isoformat()}"), ("date", f"lte.{last_day.isoformat()}")],
         )
-        return [
-            {
-                "task_id": str(row["task_id"]),
-                "user_id": row["user_id"],
-                "name": row["name"],
-                "description": row.get("description") or "",
-                "due": row["date"],
-                "status": row["status"],
-                "changeable": bool(row["changeable"]),
-            }
-            for row in rows
-        ]
+        return [self._task(row) for row in rows]
+
+    def task(self, user_id: str, task_id: str) -> dict | None:
+        if not str(task_id).isdigit():  # task ids are numbers in the database; anything else can't exist
+            return None
+        rows = self._get("tasks", [("user_id", f"eq.{user_id}"), ("task_id", f"eq.{task_id}")])
+        return self._task(rows[0]) if rows else None
 
     def journal(self, user_id: str, journal_id: str) -> dict | None:
         rows = self._get("journals", [("user_id", f"eq.{user_id}"), ("journal_id", f"eq.{journal_id}")])
         return rows[0] if rows else None
+
+    def journal_on(self, user_id: str, day: date) -> dict | None:
+        rows = self._get("journals", [("user_id", f"eq.{user_id}"), ("date", f"eq.{day.isoformat()}")])
+        return rows[0] if rows else None
+
+    def journals(self, user_id: str, first_day: date, last_day: date) -> list[dict]:
+        return self._get("journals", [("user_id", f"eq.{user_id}"), ("date", f"gte.{first_day.isoformat()}"),
+                                      ("date", f"lte.{last_day.isoformat()}"), ("order", "date.asc")])
+
+    def overview(self, user_id: str, day: date) -> dict | None:
+        rows = self._get("daily_overviews", [("user_id", f"eq.{user_id}"), ("date", f"eq.{day.isoformat()}")])
+        return rows[0]["overview"] if rows else None
+
+    def save_overview(self, user_id: str, day: date, overview: dict) -> None:
+        """Insert, or replace the day's overview (a refresh), in one request."""
+        response = self.client.post(
+            "/daily_overviews", params=[("on_conflict", "user_id,date")],
+            json={"user_id": user_id, "date": day.isoformat(), "overview": overview},
+            headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+        )
+        response.raise_for_status()
 
     def suggestions(self, user_id: str, status: str | None = None) -> list[dict]:
         params = [("user_id", f"eq.{user_id}"), ("order", "created_at.asc")]
@@ -133,14 +151,43 @@ class SupabaseStore:
         response.raise_for_status()
         return response.json()
 
+    def _delete(self, table: str, params: list[tuple[str, str]]) -> list[dict]:
+        """Delete rows; returns the rows deleted (an empty list means RLS or a filter matched nothing)."""
+        response = self.client.request("DELETE", f"/{table}", params=params, headers={"Prefer": "return=representation"})
+        response.raise_for_status()
+        return response.json()
+
     def set_status(self, suggestion_id: str, status: str) -> None:
         if not self._write("PATCH", "ai_suggestions", [("suggestion_id", f"eq.{suggestion_id}")], {"status": status}):
             raise LookupError(f"suggestion {suggestion_id} wasn't updated")
 
     def apply(self, suggestion: dict) -> None:
-        """Make an accepted suggestion real in calendar_events, with the user's own token."""
+        """Make an accepted suggestion real (events, tasks, journals), with the user's own token."""
         tz = ZoneInfo(self.user(suggestion["user_id"])["timezone"])
         change = suggestion["proposed_change"]
+        user = ("user_id", f"eq.{suggestion['user_id']}")
+        if suggestion["type"] in ("DELETE_EVENT", "DELETE_TASK", "DELETE_JOURNAL"):
+            table, key = {"DELETE_EVENT": ("calendar_events", "event_id"), "DELETE_TASK": ("tasks", "task_id"),
+                          "DELETE_JOURNAL": ("journals", "date")}[suggestion["type"]]
+            if not self._delete(table, [user, (key, f"eq.{change['id']}")]):
+                raise LookupError(f"suggestion {suggestion['suggestion_id']} couldn't be applied: it's already gone")
+            return
+        if suggestion["type"] == "EDIT_JOURNAL":  # replace the day's text (recheck made sure it's unchanged)
+            written = self._write("PATCH", "journals", [user, ("date", f"eq.{change['date']}")], {"information": change["text"]})
+            if not written:
+                raise LookupError(f"suggestion {suggestion['suggestion_id']} couldn't be applied: the entry is gone")
+            return
+        if suggestion["type"] == "ADD_JOURNAL":  # add to the day's entry, or start one
+            entry = self.journal_on(suggestion["user_id"], date.fromisoformat(change["date"]))
+            if entry:
+                written = self._write("PATCH", "journals", [user, ("journal_id", f"eq.{entry['journal_id']}")],
+                                      {"information": journal_text(entry["information"], change["text"])})
+            else:
+                written = self._write("POST", "journals", None, {"user_id": suggestion["user_id"], "date": change["date"],
+                                                                  "information": change["text"]})
+            if not written:
+                raise LookupError(f"suggestion {suggestion['suggestion_id']} couldn't be applied")
+            return
         if suggestion["type"] == "CREATE_TASK":  # a deadline: a row in tasks, due that day
             due = datetime.fromisoformat(change["due"]).astimezone(tz)
             body = {"user_id": suggestion["user_id"], "name": change["name"], "description": task_description(due),
@@ -185,6 +232,19 @@ class SupabaseStore:
             "end": end.isoformat(),
             "changeable": bool(row["changeable"]),
             **({"recurrence_rule": row["recurrence_rule"]} if row.get("recurrence_rule") else {}),
+        }
+
+    @staticmethod
+    def _task(row: dict) -> dict:
+        return {
+            "task_id": str(row["task_id"]),
+            "user_id": row["user_id"],
+            "name": row["name"],
+            "description": row.get("description") or "",
+            "due": row["date"],
+            "status": row["status"],
+            "changeable": bool(row["changeable"]),
+            "updated_at": row.get("updated_at"),  # when it was last changed, e.g. marked done
         }
 
     @staticmethod

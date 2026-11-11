@@ -182,6 +182,10 @@ def planning_results(paths: list[Path]) -> tuple[dict, list[str]]:
 
 def suggestion_text(s: dict) -> str:
     change = s["proposed_change"]
+    if s["type"].startswith("DELETE_"):
+        return f"delete {change['what']} {change['id']}" + (f" ('{change['name']}')" if change.get("name") else "")
+    if s["type"] == "ADD_JOURNAL":
+        return f"journal for {change['date']}: \"{change['text'][:120]}\""
     start, end = datetime.fromisoformat(change["start"]), datetime.fromisoformat(change["end"])
     what = f"move {s['target_id']}" if s["type"] == "MOVE_EVENT" else f"new '{change.get('name', '')}'"
     return f"{what}: {day_text(start.date())}, {span(start, end)}"

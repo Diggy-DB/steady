@@ -20,7 +20,8 @@ from ai.supabase_store import SupabaseStore
 DETROIT = ZoneInfo("America/Detroit")
 NOW = datetime(2026, 10, 5, 18, 30, tzinfo=DETROIT)
 TOKEN = "user-1-access-token"
-ID_COLUMNS = {"calendar_events": "event_id", "tasks": "task_id", "ai_suggestions": "suggestion_id", "activity_log": "log_id"}
+ID_COLUMNS = {"calendar_events": "event_id", "tasks": "task_id", "ai_suggestions": "suggestion_id", "activity_log": "log_id",
+              "journals": "journal_id", "daily_overviews": "overview_id"}
 
 
 def number(fixture_id: str) -> int:
@@ -46,11 +47,13 @@ def database_tables() -> dict[str, list[dict]]:
          "date": t["due"], "status": t["status"], "changeable": t["changeable"]}
         for t in data["tasks"]
     ]
-    return {"users": data["users"], "calendar_events": events, "tasks": tasks, "ai_suggestions": [], "activity_log": []}
+    journals = [{"journal_id": 1, "user_id": "user-1", "date": "2026-10-04", "information": "Quiet Sunday."}]
+    return {"users": data["users"], "calendar_events": events, "tasks": tasks, "ai_suggestions": [], "activity_log": [],
+            "journals": journals, "daily_overviews": []}
 
 
 class FakeSupabase:
-    """Answers GET, POST and PATCH the way Supabase's REST API would, from in-memory tables."""
+    """Answers GET, POST, PATCH and DELETE the way Supabase's REST API would, from in-memory tables."""
 
     def __init__(self):
         self.tables = database_tables()
@@ -61,7 +64,12 @@ class FakeSupabase:
         assert request.headers["authorization"] == f"Bearer {TOKEN}"
         table = request.url.path.rsplit("/", 1)[-1]
         if request.method == "POST":
-            row = {ID_COLUMNS[table]: 100 + len(self.tables[table]), **json.loads(request.content)}
+            body = json.loads(request.content)
+            conflict = request.url.params.get("on_conflict")
+            if conflict:  # an upsert: replace the row with the same key, if there is one
+                keys = conflict.split(",")
+                self.tables[table] = [r for r in self.tables[table] if any(r.get(k) != body.get(k) for k in keys)]
+            row = {ID_COLUMNS[table]: 100 + len(self.tables[table]), **body}
             self.tables[table].append(row)
             return httpx.Response(201, json=[row])
         rows = self.tables[table]
@@ -73,6 +81,8 @@ class FakeSupabase:
         if request.method == "PATCH":
             for r in rows:
                 r.update(json.loads(request.content))
+        if request.method == "DELETE":
+            self.tables[table] = [r for r in self.tables[table] if r not in rows]
         return httpx.Response(200, json=rows)
 
     @staticmethod
@@ -185,3 +195,66 @@ def test_a_weekly_class_is_saved_with_its_rule_and_read_back_every_week(fake):
     week = s.events("user-1", datetime(2026, 10, 5, tzinfo=DETROIT), datetime(2026, 10, 12, tzinfo=DETROIT))
     lectures = [e["start"][:16] for e in week if e["name"] == "CSE 260 Lecture"]
     assert lectures == ["2026-10-06T12:40", "2026-10-08T12:40"]
+
+
+# ---- Deletes, journal entries and the daily overview ----
+
+def test_accepting_deletes_removes_the_rows(fake):
+    from ai.planning import propose_delete
+
+    s = store(fake)
+    ctx = ToolContext(s, "user-1", NOW)
+    propose_delete(ctx, "event", "4", "You're skipping the gym.")  # e4, the gym
+    propose_delete(ctx, "task", "1", "Dropped.")
+    propose_delete(ctx, "journal", "2026-10-04", "As you asked.")
+    for suggestion in s.suggestions("user-1"):
+        assert suggestion["target_id"] is None  # the database's target_id only points at events being moved
+        s.apply(suggestion)
+    assert not any(e["event_id"] == 4 for e in fake.tables["calendar_events"])
+    assert not any(t["task_id"] == 1 for t in fake.tables["tasks"]) and fake.tables["journals"] == []
+    deletes = [r for r in fake.requests if r.method == "DELETE"]
+    assert len(deletes) == 3 and all(("user_id", "eq.user-1") in r.url.params.multi_items() for r in deletes)
+
+
+def test_deleting_something_already_gone_is_an_error(fake):
+    s = store(fake)
+    suggestion = {"suggestion_id": "9", "user_id": "user-1", "type": "DELETE_TASK",
+                  "proposed_change": {"what": "task", "id": "77", "name": "Gone"}}
+    with pytest.raises(LookupError, match="already gone"):
+        s.apply(suggestion)
+
+
+def test_journal_text_starts_an_entry_or_is_added_to_one(fake):
+    from ai.planning import propose_journal_entry
+
+    s = store(fake)
+    ctx = ToolContext(s, "user-1", NOW)
+    propose_journal_entry(ctx, "2026-10-04", "Called home.")
+    propose_journal_entry(ctx, "2026-10-05", "Long Monday.")
+    for suggestion in s.suggestions("user-1"):
+        s.apply(suggestion)
+    by_day = {j["date"]: j["information"] for j in fake.tables["journals"]}
+    assert by_day == {"2026-10-04": "Quiet Sunday.\n\nCalled home.", "2026-10-05": "Long Monday."}
+
+
+def test_ids_that_arent_numbers_are_simply_not_found(fake):
+    s = store(fake)
+    assert s.event("user-1", "e2") is None and s.task("user-1", "t1") is None
+    assert not [r for r in fake.requests if "event_id" in str(r.url) or "task_id" in str(r.url)]
+
+
+def test_the_days_overview_is_saved_once_and_replaced_on_refresh(fake):
+    s = store(fake)
+    s.save_overview("user-1", date(2026, 10, 6), {"headline": "First"})
+    s.save_overview("user-1", date(2026, 10, 6), {"headline": "Second"})
+    assert len(fake.tables["daily_overviews"]) == 1 and s.overview("user-1", date(2026, 10, 6)) == {"headline": "Second"}
+    assert s.overview("user-1", date(2026, 10, 7)) is None
+
+
+def test_an_accepted_journal_edit_replaces_the_text(fake):
+    from ai.planning import propose_journal_entry
+
+    s = store(fake)
+    propose_journal_entry(ToolContext(s, "user-1", NOW), "2026-10-04", "Quiet, restful Sunday.", replace=True)
+    s.apply(s.suggestions("user-1")[0])
+    assert fake.tables["journals"][0]["information"] == "Quiet, restful Sunday."

@@ -10,6 +10,7 @@ its old time counts as free, and anything proposed in that time records the
 move in `depends_on` (it only works if the user accepts the move too).
 """
 
+import re
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
@@ -55,6 +56,15 @@ def pending_moves(ctx: ToolContext) -> dict[str, str]:
     }
 
 
+def pending_deletes(ctx: ToolContext) -> dict[tuple[str, str], str]:
+    """(what, id) -> id of the pending suggestion that deletes it, e.g. ("event", "e2") -> "s3"."""
+    return {
+        (s["proposed_change"]["what"], s["proposed_change"]["id"]): s["suggestion_id"]
+        for s in ctx.store.suggestions(ctx.user_id, status="PENDING")
+        if s["type"] in DELETE_TYPES.values()
+    }
+
+
 def busy(
     ctx: ToolContext,
     start: datetime,
@@ -76,7 +86,9 @@ def busy(
             e_end = datetime.fromisoformat(e["end"]).astimezone(tz)
             taken.append((e_start, e_end, e["name"]))
     for s in ctx.store.suggestions(ctx.user_id, status="PENDING"):
-        if s["suggestion_id"] == ignore_suggestion_id or s["type"] == "CREATE_TASK":  # a task takes no time
+        # Only new and moved events take time (tasks, deletes and journal notes don't). An event with a
+        # pending delete still counts as busy until the user accepts the delete.
+        if s["suggestion_id"] == ignore_suggestion_id or s["type"] not in ("CREATE_EVENT", "MOVE_EVENT"):
             continue
         for o in occurrences(s["proposed_change"], start, end, tz):  # a weekly class, each week
             o_start = datetime.fromisoformat(o["start"]).astimezone(tz)
@@ -316,6 +328,8 @@ def propose_move_event(ctx: ToolContext, event_id: str, new_start: str, new_end:
         raise ToolError(f"{event['name']} is fixed (changeable: false) and can't be moved")
     if event_id in pending_moves(ctx):
         raise ToolError(f"{event['name']} already has a pending move ({pending_moves(ctx)[event_id]})")
+    if ("event", event_id) in pending_deletes(ctx):
+        raise ToolError(f"{event['name']} already has a pending delete ({pending_deletes(ctx)[('event', event_id)]})")
 
     tz = user_timezone(ctx)
     old_start = datetime.fromisoformat(event["start"]).astimezone(tz)
@@ -346,6 +360,187 @@ def propose_move_event(ctx: ToolContext, event_id: str, new_start: str, new_end:
     }
 
 
+DELETE_TYPES = {"event": "DELETE_EVENT", "task": "DELETE_TASK", "journal": "DELETE_JOURNAL"}
+
+# Words that ask to delete something. A small model sometimes adds a delete nobody asked for (asked for time
+# for a lab report, it also suggested deleting a problem set), so the tools check the request itself.
+DELETE_WORDS = re.compile(
+    r"\b(?:delet\w*|remov\w*|cancel\w*|drop\w*|get rid|rid of|off (?:my|the) (?:calendar|list|task list|schedule|tasks)|"
+    r"take (?:it|that|them|this) off|clear\w*|skip\w*|not going|won'?t (?:go|make|need|be going)|don'?t need|"
+    r"no longer|erase|scrap|ditch|called off)\b", re.IGNORECASE)
+JOURNAL_WORDS = re.compile(r"\b(?:journal\w*|diary|note (?:down|that|in|it)|write (?:down|in|that|it)|log (?:that|it))\b",
+                           re.IGNORECASE)
+
+
+def require_asked(ctx: ToolContext, words: re.Pattern, what: str) -> None:
+    if ctx.asked is not None and not words.search(ctx.asked):
+        raise ToolError(f"the user didn't ask to {what}, so don't suggest it; do only what they asked")
+
+PROPOSE_DELETE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "propose_delete",
+        "description": (
+            "Suggest deleting one event, task or journal entry. Use it only when the user asks to delete, "
+            "remove or cancel it, or agrees to. Never delete something to make room: suggest a move instead. "
+            "Nothing changes until the user accepts. Fails for fixed items (changeable: false)."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "what": {"type": "string", "enum": ["event", "task", "journal"]},
+                "id": {"type": "string",
+                       "description": "The event's or task's id from get_schedule, e.g. 'e2'; for a journal entry, its date YYYY-MM-DD"},
+                "reason": {"type": "string", "description": "One short sentence shown to the user"},
+            },
+            "required": ["what", "id", "reason"],
+        },
+    },
+}
+
+
+def propose_delete(ctx: ToolContext, what: str, id: str, reason: str) -> dict:  # noqa: A002 (the model's name for it)
+    require_asked(ctx, DELETE_WORDS, "delete or remove anything")
+    tz = user_timezone(ctx)
+    if what not in DELETE_TYPES:
+        raise ToolError("what must be 'event', 'task' or 'journal'")
+    if (what, str(id)) in pending_deletes(ctx):
+        raise ToolError(f"that {what} already has a pending delete ({pending_deletes(ctx)[(what, str(id))]})")
+    if what == "event":
+        event = ctx.store.event(ctx.user_id, id)
+        if event is None:
+            raise ToolError(f"there is no event with id {id!r}; use get_schedule to find event ids")
+        if event.get("recurrence_rule"):
+            raise ToolError(f"{event['name']} repeats every week; the user can delete it from their calendar themselves")
+        if not event["changeable"]:
+            raise ToolError(f"{event['name']} is fixed (changeable: false) and can't be deleted")
+        if id in pending_moves(ctx):
+            raise ToolError(f"{event['name']} has a pending move ({pending_moves(ctx)[id]}); it can't also be deleted")
+        start = datetime.fromisoformat(event["start"]).astimezone(tz)
+        end = datetime.fromisoformat(event["end"]).astimezone(tz)
+        change = {"what": "event", "id": id, "name": event["name"], "start": start.isoformat(), "end": end.isoformat()}
+        described = f"{event['name']} ({describe_range(start, end)})"
+    elif what == "task":
+        task = ctx.store.task(ctx.user_id, id)
+        if task is None:
+            raise ToolError(f"there is no task with id {id!r}; use get_schedule to find task ids")
+        if not task["changeable"]:
+            raise ToolError(f"{task['name']} is fixed (changeable: false) and can't be deleted")
+        change = {"what": "task", "id": id, "name": task["name"], "due": task["due"]}
+        described = f"the task {task['name']} (due {format_day(date.fromisoformat(task['due']))})"
+    else:
+        day = parse_day(id, "id (the journal entry's date)")
+        entry = ctx.store.journal_on(ctx.user_id, day)
+        if entry is None:
+            raise ToolError(f"there is no journal entry on {format_day(day)}")
+        change = {"what": "journal", "id": day.isoformat(), "journal_id": str(entry["journal_id"]),
+                  "preview": entry["information"][:200]}
+        described = f"your journal entry for {format_day(day)}"
+    suggestion = ctx.store.add_suggestion(ctx.user_id, {
+        "type": DELETE_TYPES[what], "target_id": None, "description": reason, "proposed_change": change,
+        "depends_on": [], "created_at": ctx.now.isoformat(), "expires_at": None,
+    })
+    return {"suggestion_id": suggestion["suggestion_id"], "status": "PENDING",
+            "summary": f"Suggested deleting {described}. Nothing changes until the user accepts it."}
+
+
+GET_JOURNAL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_journal",
+        "description": "Read the user's journal entry for one day, to answer a question about it or before editing it.",
+        "parameters": {
+            "type": "object",
+            "properties": {"date": {"type": "string", "description": "The day, YYYY-MM-DD"}},
+            "required": ["date"],
+        },
+    },
+}
+
+
+def get_journal(ctx: ToolContext, date: str) -> dict:  # noqa: A002 ("date" is the model's word)
+    day = parse_day(date, "date")
+    entry = ctx.store.journal_on(ctx.user_id, day)
+    if entry is None:
+        return {"date": day.isoformat(), "day": format_day(day), "text": None, "note": "no journal entry that day"}
+    return {"date": day.isoformat(), "day": format_day(day), "text": entry["information"]}
+
+
+PROPOSE_JOURNAL_ENTRY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "propose_journal_entry",
+        "description": (
+            "Suggest adding text to the user's journal for one day (added to that day's entry, or starting one), "
+            "or, with replace: true, suggest an edited version of the whole entry. Use it when the user asks you "
+            "to write in their journal, note how their day went, or change what they wrote. Write in the first "
+            "person, as the user, using only what they told you. Nothing changes until the user accepts."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "date": {"type": "string", "description": "The day the entry is for, YYYY-MM-DD (today or earlier)"},
+                "text": {"type": "string", "description": "What to add; with replace: true, the full corrected entry"},
+                "replace": {"type": "boolean",
+                            "description": "true to replace the whole entry (to edit or correct it; read it with "
+                                           "get_journal first and keep everything the user didn't ask to change); "
+                                           "false (the default) to add to it"},
+            },
+            "required": ["date", "text"],
+        },
+    },
+}
+
+OLD_JOURNAL_DAYS = 7  # a new entry further back than this is refused as a probable date mistake
+MAX_JOURNAL_TEXT = 2000  # what the AI may add at once
+MAX_EDITED_TEXT = 8000  # a whole edited entry
+
+
+def propose_journal_entry(ctx: ToolContext, date: str, text: str, replace: bool = False) -> dict:  # noqa: A002
+    require_asked(ctx, JOURNAL_WORDS, "write in their journal")
+    tz = user_timezone(ctx)
+    day = parse_day(date, "date")
+    today = ctx.now.astimezone(tz).date()
+    if day > today:
+        raise ToolError(f"{format_day(day)} hasn't happened yet; a journal entry can only be for today or earlier")
+    if (today - day).days > OLD_JOURNAL_DAYS and ctx.store.journal_on(ctx.user_id, day) is None:
+        # Small models get dates wrong (the wrong year, "Friday" read as last Friday). An entry for a long-gone
+        # day with nothing in it is almost always that mistake, so say what today and yesterday are.
+        yesterday = today - timedelta(days=1)
+        raise ToolError(f"{format_day(day)}, {day.year} was {(today - day).days} days ago. Today is {format_day(today)}, "
+                        f"{today.year} ({today.isoformat()}); yesterday was {yesterday.isoformat()}. Use the day the "
+                        "user meant; if it really is that old day, ask the user to confirm it first")
+    if not isinstance(text, str) or not text.strip():
+        raise ToolError("text can't be empty")
+    text = text.strip()
+    if len(text) > (MAX_EDITED_TEXT if replace else MAX_JOURNAL_TEXT):
+        raise ToolError(f"keep it under {MAX_EDITED_TEXT if replace else MAX_JOURNAL_TEXT} characters")
+    existing = ctx.store.journal_on(ctx.user_id, day)
+    if replace is True:
+        if existing is None:
+            raise ToolError(f"there's no journal entry on {format_day(day)} to edit; to start one, leave out replace")
+        if text == existing["information"].strip():
+            raise ToolError("that's the same as the current entry; nothing to change")
+        suggestion = ctx.store.add_suggestion(ctx.user_id, {
+            "type": "EDIT_JOURNAL", "target_id": None, "description": "Edit your journal entry",
+            # "old" is the entry this edit was written from: Accept refuses if the user has changed it since.
+            "proposed_change": {"date": day.isoformat(), "text": text, "old": existing["information"]},
+            "depends_on": [], "created_at": ctx.now.isoformat(), "expires_at": None,
+        })
+        return {"suggestion_id": suggestion["suggestion_id"], "status": "PENDING",
+                "summary": f"Suggested an edited journal entry for {format_day(day)}; the user sees it before and "
+                           "after. Nothing changes until the user accepts it."}
+    suggestion = ctx.store.add_suggestion(ctx.user_id, {
+        "type": "ADD_JOURNAL", "target_id": None,
+        "description": "Add to your journal" if existing else "Start your journal entry",
+        "proposed_change": {"date": day.isoformat(), "text": text, "adds_to_existing": existing is not None},
+        "depends_on": [], "created_at": ctx.now.isoformat(), "expires_at": None,
+    })
+    where = "added to" if existing else "a new entry in"
+    return {"suggestion_id": suggestion["suggestion_id"], "status": "PENDING",
+            "summary": f"Suggested text {where} the journal for {format_day(day)}. Nothing changes until the user accepts it."}
+
+
 def recheck(ctx: ToolContext, suggestion: dict) -> list[str]:
     """Problems that stop a suggestion from being applied now; an empty list means it's still valid.
 
@@ -356,6 +551,28 @@ def recheck(ctx: ToolContext, suggestion: dict) -> list[str]:
         return [f"it is {suggestion['status']}, not PENDING"]
     change = suggestion["proposed_change"]
     tz = user_timezone(ctx)
+    if suggestion["type"] == "ADD_JOURNAL":
+        return []  # adding to a journal is always possible
+    if suggestion["type"] == "EDIT_JOURNAL":
+        entry = ctx.store.journal_on(ctx.user_id, date.fromisoformat(change["date"]))
+        if entry is None:
+            return ["that journal entry is gone"]
+        if entry["information"] != change["old"]:  # never overwrite what the user wrote after the suggestion
+            return ["the journal entry has changed since this edit was suggested; ask Steady again"]
+        return []
+    if suggestion["type"] == "DELETE_EVENT":
+        event = ctx.store.event(ctx.user_id, change["id"])
+        if event is None:
+            return [f"{change['name']} is already gone"]
+        return [] if event["changeable"] else [f"{event['name']} is now fixed (changeable: false)"]
+    if suggestion["type"] == "DELETE_TASK":
+        task = ctx.store.task(ctx.user_id, change["id"])
+        if task is None:
+            return [f"{change['name']} is already gone"]
+        return [] if task["changeable"] else [f"{task['name']} is now fixed (changeable: false)"]
+    if suggestion["type"] == "DELETE_JOURNAL":
+        found = ctx.store.journal_on(ctx.user_id, date.fromisoformat(change["id"]))
+        return [] if found else ["that journal entry is already gone"]
     if suggestion["type"] == "CREATE_TASK":
         due = datetime.fromisoformat(change["due"]).astimezone(tz)
         return [f"it was due {format_day(due)} at {format_time(due)}, which has passed"] if due < ctx.now else []

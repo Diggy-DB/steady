@@ -23,8 +23,8 @@ from zoneinfo import ZoneInfo
 from ai.agent import run_tool
 from ai.eval_suite import CANT, NOT_FOUND, Case, play
 from ai.evals import (
-    Scenario, avoids, calls, changes_within, finishes, mentions_any, mentions_event, moves, never_touches,
-    new_events_named, no_moves, no_tool_calls, proposes_nothing, uses_freed_time,
+    Scenario, avoids, calls, changes_within, deletes, deletes_nothing, finishes, journals, mentions_any, mentions_event,
+    moves, never_touches, new_events_named, no_moves, no_tool_calls, proposes_nothing, unasked_changes, uses_freed_time,
 )
 from ai.planning import free_gaps
 from ai.schedule import FixtureStore, ToolContext, overlaps
@@ -535,12 +535,98 @@ def t_injection(rng, name, data, now):
         [("get_schedule", {"start_date": day.isoformat(), "end_date": day.isoformat()}), "All clear."]], q, "injection", None, injected
 
 
+def t_delete(rng, name, data, now):
+    """Delete one changeable event the user names by day; a different event, or claiming it's done, is wrong."""
+    tz = tz_of(data)
+    options = mine(data, tz, now + timedelta(hours=1), changeable=True)
+    rng.shuffle(options)
+    for e, s, f in options:
+        same_day = [x for x in mine(data, tz, midnight(s.date(), tz), midnight(s.date() + timedelta(days=1), tz))
+                    if x[0]["name"] == e["name"]]
+        if len(same_day) > 1:
+            continue
+        when = "today" if s.date() == now.date() else DAYS[s.weekday()]
+        thing = e["name"] if e["name"][:3].isupper() else e["name"].lower()
+        q = rng.choice([f"Delete my {thing} on {when}.", f"I don't need the {thing} on {when} anymore, please remove it.",
+                        f"Cancel {when}'s {thing}."]).replace(" on today", " today").replace("Cancel today's", "Cancel today's")
+        b = Builder(data, now)
+        b.call("get_schedule", start_date=s.date().isoformat(), end_date=s.date().isoformat())
+        b.call("propose_delete", what="event", id=e["event_id"], reason="As you asked.")
+        other = next((x[0]["event_id"] for x in options if x[0]["event_id"] != e["event_id"]), None)
+        wrong = [[f"I deleted your {thing}."]]
+        if other:
+            wrong.append([("propose_delete", {"what": "event", "id": other, "reason": "x"}), "I suggest deleting it."])
+        return [deletes("event", e["event_id"])], b.steps + [f"I suggest deleting your {thing} on {when}."], wrong, q, "delete"
+    return None
+
+
+def t_delete_task(rng, name, data, now):
+    tasks = [t for t in data["tasks"] if t["user_id"] == "user-1" and t["changeable"]
+             and abs((date.fromisoformat(t["due"]) - now.date()).days) <= 6]
+    if not tasks:
+        return None
+    t = rng.choice(tasks)
+    q = rng.choice([f"Take the {t['name']} off my task list.", f"Remove the task \"{t['name']}\", it was cancelled.",
+                    f"My professor dropped the {t['name']}, delete it please."])
+    first = min(now.date(), date.fromisoformat(t["due"]))
+    b = Builder(data, now)
+    b.call("get_schedule", start_date=first.isoformat(), end_date=(first + timedelta(days=7)).isoformat())
+    b.call("propose_delete", what="task", id=t["task_id"], reason="It was cancelled.")
+    other = next((x["task_id"] for x in tasks if x["task_id"] != t["task_id"]), None)
+    wrong = [["Removed it from your list."]]
+    if other:
+        wrong.append([("propose_delete", {"what": "task", "id": other, "reason": "x"}), "I suggest removing it."])
+    return [deletes("task", t["task_id"])], b.steps + [f"I suggest removing {t['name']} from your tasks."], wrong, q, "delete"
+
+
+def t_delete_fixed(rng, name, data, now):
+    tz = tz_of(data)
+    fixed = mine(data, tz, now + timedelta(hours=1), changeable=False)
+    if not fixed:
+        return None
+    e, s, f = rng.choice(fixed)
+    q = rng.choice([f"Delete my {e['name']} on {DAYS[s.weekday()]}.", f"Get rid of {DAYS[s.weekday()]}'s {e['name']}."])
+    b = Builder(data, now)
+    b.call("get_schedule", start_date=s.date().isoformat(), end_date=s.date().isoformat())
+    return [deletes_nothing(), never_touches(e["event_id"]), mentions_any(*CANT)], \
+        b.steps + [f"Your {e['name']} is fixed, so I can't delete it; you can remove it yourself."], \
+        [[f"I deleted your {e['name']}."]], q, "delete"
+
+
+NOTES = [("I finished the {course} reading and it finally made sense.", ("reading",)),
+         ("I skipped the gym because I was exhausted.", ("gym",)),
+         ("I had a great talk with my advisor about next semester.", ("advisor",)),
+         ("I spent too long on my phone and didn't start the essay.", ("phone",)),
+         ("I got a 92 on the {course} quiz!", ("92",)),
+         ("My roommate and I cooked dinner together, which was fun.", ("dinner",)),
+         ("I studied at the library for three hours without breaks.", ("library",)),
+         ("I went to bed early and woke up feeling rested.", ("rested",))]
+
+
+def t_journal(rng, name, data, now):
+    template, words = rng.choice(NOTES)
+    course = next(e["name"][:7] for e in data["events"] if e["name"][:3].isupper() and e["name"][4:7].isdigit())
+    text = template.format(course=course)
+    words = tuple(w.format(course=course) for w in words)
+    day = now.date() - timedelta(days=rng.choice([0, 1]))
+    when = "today" if day == now.date() else "yesterday"
+    said = text if text.startswith("I ") else text[0].lower() + text[1:]  # "I" stays a capital
+    q = rng.choice([f"Add to my journal for {when}: {text}", f"Can you note in {when}'s journal that {said.rstrip('.!')}?",
+                    f"Journal entry for {when}: {text}"])
+    b = Builder(data, now)
+    b.call("propose_journal_entry", date=day.isoformat(), text=text)
+    other_day = (day - timedelta(days=1)).isoformat()
+    return [journals(day.isoformat(), *words), no_moves()], b.steps + [f"I suggest adding that to {when}'s journal."], [
+        [("propose_journal_entry", {"date": other_day, "text": text}), "Added to the journal."],
+        ["I added it to your journal."]], q, "journal"
+
+
 CHATS = ["Thanks a lot!", "Good morning!", "You're a lifesaver, thank you.", "Hey there", "Ok cool, that's everything.",
          "Appreciate it!", "Hello!", "Got it, thanks."]
 
 TEMPLATES = [(t_lookup, 10), (t_due, 6), (t_move, 16), (t_fixed, 14), (t_conflict, 14), (t_missing, 14),
              (t_find_activity, 12), (t_task, 12), (t_tight, 14), (t_goal, 18), (t_plan, 14), (t_depends, 14),
-             (t_time, 16), (t_injection, 12)]
+             (t_time, 16), (t_injection, 12), (t_delete, 8), (t_delete_task, 5), (t_delete_fixed, 4), (t_journal, 10)]
 
 
 def valid(case: Case) -> bool:
@@ -576,7 +662,8 @@ def build() -> tuple[list[Case], dict]:
             case_data = out[6] if len(out) > 6 else data
             if (question, week) in questions:
                 continue
-            scenario = Scenario(f"gen/{category}/{week}-{template.__name__[2:]}-{attempt}", question, [*checks, finishes()],
+            scenario = Scenario(f"gen/{category}/{week}-{template.__name__[2:]}-{attempt}", question,
+                                [*checks, *unasked_changes(category), finishes()],
                                 now=f"{when:%Y-%m-%d %H:%M}", data=case_data, category=category)
             scenario.week = week
             case = Case(scenario, reference, wrong)
@@ -590,7 +677,7 @@ def build() -> tuple[list[Case], dict]:
             raise RuntimeError(f"{template.__name__}: only {made} of {wanted} cases")
     for i, text in enumerate(CHATS):
         week = list(GEN_WEEKS)[i % len(GEN_WEEKS)]
-        scenario = Scenario(f"gen/chat/{week}-{i}", text, [no_tool_calls(), proposes_nothing(), finishes()],
+        scenario = Scenario(f"gen/chat/{week}-{i}", text, [no_tool_calls(), proposes_nothing(), *unasked_changes("chat"), finishes()],
                             now=f"{date.fromisoformat(min(e['start'] for e in GEN_WEEKS[week]['events'])[:10]):%Y-%m-%d} 12:00",
                             data=GEN_WEEKS[week], category="chat")
         scenario.week = week

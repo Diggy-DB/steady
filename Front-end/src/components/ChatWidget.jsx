@@ -3,19 +3,37 @@ import { ai } from "../lib/ai";
 import { describeRule } from "../lib/recurrence";
 
 // Chat with the AI service. Its replies can come with suggestions; each one is a card
-// with Accept / Decline. Only those buttons change the calendar, never the chat text.
+// with Accept / Decline. Only those buttons change the calendar or the journal, never the chat text.
 // The 📎 button sends a syllabus (PDF or photo): the AI reads it and suggests every deadline,
 // exam and weekly class in it, as cards like any other suggestion.
+// `request` ({id, text}) opens the chat and sends that message, e.g. "Ask Steady" on the daily overview.
 
 const MAX_UPLOAD_MB = 15;
 const FILE_TYPES = "application/pdf,image/jpeg,image/png,image/webp"; // phones turn HEIC photos into JPEG for these
 const POLL_MS = 2500;
 const GIVE_UP_MS = 6 * 60 * 1000;
 
+// Ask for a background job (a chat answer or a syllabus import) until it's finished.
+async function waitFor(job, fetchJob, running, onTick) {
+  const started = Date.now();
+  while (job.status === running) {
+    if (Date.now() - started > GIVE_UP_MS) throw new Error("it's taking too long; try again in a few minutes");
+    await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+    onTick(Math.round((Date.now() - started) / 1000));
+    job = await fetchJob();
+  }
+  return job;
+}
+
 const dayText = (d) => d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 const timeText = (d) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
+const dateOnly = (iso) => new Date(`${iso.slice(0, 10)}T12:00:00`); // a YYYY-MM-DD day, without time zone surprises
+
 function when(type, change) {
+  if (type === "ADD_JOURNAL" || type === "EDIT_JOURNAL") return `Journal for ${dayText(dateOnly(change.date))}`;
+  if (type === "DELETE_JOURNAL") return `Journal entry for ${dayText(dateOnly(change.id))}`;
+  if (type === "DELETE_TASK") return `Due ${dayText(dateOnly(change.due))}`;
   if (type === "CREATE_TASK") {
     const due = new Date(change.due);
     return `Due ${dayText(due)}, ${timeText(due)}`;
@@ -31,33 +49,55 @@ function when(type, change) {
 function SuggestionCard({ suggestion, events, onAnswer }) {
   const { type, proposed_change: change, target_id: targetId, description, status, error } = suggestion;
   const target = events.find((e) => String(e.event_id) === String(targetId));
-  const title =
-    type === "CREATE_TASK"
-      ? `Add task "${change.name}"`
-      : type === "CREATE_EVENT"
-        ? `Add ${change.recurrence_rule ? "weekly " : ""}"${change.name}"`
-        : `Move "${target ? target.name : `event ${targetId}`}"`;
+  const isDelete = type.startsWith("DELETE_");
+  const titles = {
+    CREATE_TASK: `Add task "${change.name}"`,
+    CREATE_EVENT: `Add ${change.recurrence_rule ? "weekly " : ""}"${change.name}"`,
+    MOVE_EVENT: `Move "${target ? target.name : `event ${targetId}`}"`,
+    DELETE_EVENT: `Delete "${change.name}"`,
+    DELETE_TASK: `Delete task "${change.name}"`,
+    DELETE_JOURNAL: "Delete journal entry",
+    ADD_JOURNAL: change.adds_to_existing ? "Add to your journal" : "Start a journal entry",
+    EDIT_JOURNAL: "Edit your journal entry",
+  };
+  const classes = ["suggestion", change.needs_check && "needs-check", isDelete && "delete"].filter(Boolean).join(" ");
 
   return (
-    <div className={change.needs_check ? "suggestion needs-check" : "suggestion"}>
-      <strong>{title}</strong>
+    <div className={classes}>
+      <strong>{titles[type] ?? type}</strong>
       <p>{when(type, change)}</p>
+      {type === "ADD_JOURNAL" && <blockquote className="suggestion-quote">{change.text}</blockquote>}
+      {type === "EDIT_JOURNAL" && (
+        <>
+          <p className="suggestion-label">Before</p>
+          <blockquote className="suggestion-quote before">{change.old}</blockquote>
+          <p className="suggestion-label">After</p>
+          <blockquote className="suggestion-quote">{change.text}</blockquote>
+        </>
+      )}
+      {type === "DELETE_JOURNAL" && change.preview && <blockquote className="suggestion-quote">{change.preview}</blockquote>}
       {change.needs_check && <p className="suggestion-warning">⚠ Check this date against your syllabus</p>}
       {description && <p className="suggestion-reason">{description}</p>}
       {status === "PENDING" ? (
         <div className="suggestion-buttons">
-          <button onClick={() => onAnswer(suggestion, "accept")}>Accept</button>
-          <button className="secondary" onClick={() => onAnswer(suggestion, "decline")}>Decline</button>
+          <button className={isDelete ? "danger" : ""} onClick={() => onAnswer(suggestion, "accept")}>
+            {isDelete ? "Delete" : "Accept"}
+          </button>
+          <button className="secondary" onClick={() => onAnswer(suggestion, "decline")}>
+            {isDelete ? "Keep it" : "Decline"}
+          </button>
         </div>
       ) : (
-        <p className="suggestion-status">{status === "ACCEPTED" ? "✓ Accepted" : status === "DECLINED" ? "Declined" : status}</p>
+        <p className="suggestion-status">
+          {status === "ACCEPTED" ? (isDelete ? "✓ Deleted" : "✓ Accepted") : status === "DECLINED" ? (isDelete ? "Kept" : "Declined") : status}
+        </p>
       )}
       {error && <p className="suggestion-error">{error}</p>}
     </div>
   );
 }
 
-function ChatWidget({ events = [], onCalendarChanged }) {
+function ChatWidget({ events = [], onCalendarChanged, request }) {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(""); // "" = idle, otherwise what the AI is doing
@@ -80,8 +120,20 @@ function ChatWidget({ events = [], onCalendarChanged }) {
   const addMessage = (sender, text, suggestions = []) =>
     setMessages((all) => [...all, { id: crypto.randomUUID(), sender, text, suggestions }]);
 
-  async function handleSend() {
-    const text = input.trim();
+  // A message from elsewhere in the app (the overview's "Ask Steady"): open the chat and send it.
+  const lastRequest = useRef(null);
+  useEffect(() => {
+    if (!request || request.id === lastRequest.current) return;
+    lastRequest.current = request.id;
+    setIsOpen(true);
+    send(request.text);
+  }, [request]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleSend() {
+    send(input.trim());
+  }
+
+  async function send(text) {
     if (text === "" || busy) return;
     // Earlier turns go along as history (final answers only), so follow-up questions work.
     const history = messages.slice(1).slice(-10).map((m) => ({
@@ -90,10 +142,13 @@ function ChatWidget({ events = [], onCalendarChanged }) {
     }));
     addMessage("USER", text);
     setInput("");
-    setBusy("Thinking… (this can take a minute)");
+    setBusy("Thinking…");
     try {
-      const { reply, suggestions } = await ai.chat(text, history);
-      addMessage("AI", reply, suggestions);
+      const first = await ai.startChat(text, history);
+      const job = await waitFor(first, () => ai.chatJob(first.chat_id), "thinking", (s) =>
+        setBusy(`Thinking… ${s}s`),
+      );
+      addMessage("AI", job.reply, job.suggestions);
     } catch (err) {
       addMessage("AI", `Sorry, something went wrong: ${err.message}`);
     } finally {
@@ -110,16 +165,12 @@ function ChatWidget({ events = [], onCalendarChanged }) {
       addMessage("AI", `That file is over ${MAX_UPLOAD_MB} MB. Try a smaller photo, or the PDF.`);
       return;
     }
-    const started = Date.now();
     setBusy("Reading your syllabus…");
     try {
-      let job = await ai.uploadSyllabus(file);
-      while (job.status === "reading") {
-        if (Date.now() - started > GIVE_UP_MS) throw new Error("it's taking too long; try again in a few minutes");
-        await new Promise((resolve) => setTimeout(resolve, POLL_MS));
-        setBusy(`Reading your syllabus… ${Math.round((Date.now() - started) / 1000)}s (photos take longer)`);
-        job = await ai.syllabusImport(job.import_id);
-      }
+      const first = await ai.uploadSyllabus(file);
+      const job = await waitFor(first, () => ai.syllabusImport(first.import_id), "reading", (s) =>
+        setBusy(`Reading your syllabus… ${s}s (photos take longer)`),
+      );
       addMessage("AI", job.reply, job.suggestions);
     } catch (err) {
       addMessage("AI", `Sorry, I couldn't read that file: ${err.message}`);

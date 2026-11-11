@@ -138,12 +138,92 @@ def moves(event_id: str, to: str | None = None, day: str | None = None, minutes:
          f", keeping it {minutes} minutes long" if minutes else "", f", starting after {when_text(after)}" if after else ""]))
 
 
+def changed_event(s: dict) -> str | None:
+    """The event a suggestion changes: a move's target, or a deleted event (deletes name it in proposed_change)."""
+    if s["type"] == "DELETE_EVENT":
+        return s["proposed_change"]["id"]
+    return s["target_id"]
+
+
 def never_touches(*event_ids: str) -> Check:
     def check(t: Transcript) -> str | None:
-        touched = [s["target_id"] for s in t.suggestions if s["target_id"] in event_ids]
+        touched = [changed_event(s) for s in t.suggestions if changed_event(s) in event_ids]
         return f"suggested changing {', '.join(touched)}" if touched else None
 
-    return described(check, f"never suggests changing {', '.join(event_ids)}")
+    return described(check, f"never suggests changing or deleting {', '.join(event_ids)}")
+
+
+DELETES = {"event": "DELETE_EVENT", "task": "DELETE_TASK", "journal": "DELETE_JOURNAL"}
+
+
+def deletes(what: str, item_id: str) -> Check:
+    """Suggests deleting exactly this one thing, and nothing else (`item_id` is a journal entry's date)."""
+
+    def check(t: Transcript) -> str | None:
+        deleted = [(s["proposed_change"]["what"], s["proposed_change"]["id"]) for s in t.suggestions
+                   if s["type"] in DELETES.values()]
+        if (what, item_id) not in deleted:
+            return f"no suggestion deleting {what} {item_id}"
+        others = [f"{w} {i}" for w, i in deleted if (w, i) != (what, item_id)]
+        return f"also suggested deleting {', '.join(others)}" if others else None
+
+    return described(check, f"suggests deleting {what} {item_id}, and nothing else")
+
+
+def deletes_nothing() -> Check:
+    def check(t: Transcript) -> str | None:
+        deleted = [f"{s['proposed_change']['what']} {s['proposed_change']['id']}" for s in t.suggestions
+                   if s["type"] in DELETES.values()]
+        return f"suggested deleting {', '.join(deleted)}" if deleted else None
+
+    return described(check, "suggests deleting nothing")
+
+
+def journals(day: str, *words: str) -> Check:
+    """A journal suggestion for `day` (YYYY-MM-DD) whose text has every one of `words`."""
+
+    def check(t: Transcript) -> str | None:
+        notes = [s["proposed_change"] for s in t.suggestions if s["type"] == "ADD_JOURNAL"]
+        if not notes:
+            return "no journal suggestion"
+        for n in notes:
+            missing = [w for w in words if w not in n["text"].lower()]
+            if n["date"] == day and not missing:
+                return None
+        return f"no journal suggestion for {day} saying {', '.join(words)}"
+
+    return described(check, f"suggests a journal entry for {day_text(day)} that mentions {', '.join(words)}")
+
+
+def edits_journal(day: str, has: tuple[str, ...] = (), lacks: tuple[str, ...] = ()) -> Check:
+    """An edit of `day`'s journal entry whose new text has every phrase in `has` (e.g. the parts the user didn't
+    ask to change) and none in `lacks` (what they asked to change)."""
+
+    def check(t: Transcript) -> str | None:
+        edits = [s["proposed_change"] for s in t.suggestions if s["type"] == "EDIT_JOURNAL" and s["proposed_change"]["date"] == day]
+        if not edits:
+            return f"no edit of the journal entry for {day}"
+        for e in edits:
+            new = e["text"].lower()
+            if all(h in new for h in has) and not any(x in new for x in lacks):
+                return None
+        return f"the edited entry doesn't have {list(has)} without {list(lacks)}: {edits[-1]['text'][:120]!r}"
+
+    return described(check, f"suggests an edit of {day_text(day)}'s journal that keeps {', '.join(has)}"
+                            + (f" and no longer says {', '.join(lacks)}" if lacks else ""))
+
+
+def writes_no_journal() -> Check:
+    def check(t: Transcript) -> str | None:
+        notes = [s for s in t.suggestions if s["type"] in ("ADD_JOURNAL", "EDIT_JOURNAL")]
+        return f"suggested {len(notes)} journal entr{'y' if len(notes) == 1 else 'ies'}" if notes else None
+
+    return described(check, "suggests no journal entry")
+
+
+# The categories where deleting or journaling is the point; everywhere else, doing either is a mistake.
+def unasked_changes(category: str) -> list[Check]:
+    return ([] if category == "delete" else [deletes_nothing()]) + ([] if category == "journal" else [writes_no_journal()])
 
 
 def new_events_named(words: tuple[str, ...], count: int | None = None, minutes: int | None = None,
@@ -187,6 +267,8 @@ def changes_within(start: datetime, end: datetime) -> Check:
 
     def check(t: Transcript) -> str | None:
         for s in t.suggestions:
+            if s["type"] not in ("CREATE_EVENT", "MOVE_EVENT"):  # deletes and journal notes have no time
+                continue
             begin, finish = (datetime.fromisoformat(s["proposed_change"][k]) for k in ("start", "end"))
             if begin < start or finish > end:
                 return f"suggested {s['proposed_change']['name']} at {begin:%a %H:%M}, outside {start:%a %H:%M}-{end:%a %H:%M}"

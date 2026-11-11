@@ -4,8 +4,8 @@ Two test sets, both kept away from training data:
 
 | What | Where | Size |
 |---|---|---|
-| **Planning agent**, hand-written (chat: look up, move, plan, ...) | `src/ai/eval_suite.py`, weeks in `fixtures/week.json` + `fixtures/eval_weeks/` | 57 cases, 13 categories, 5 students' weeks |
-| **Planning agent**, generated | `src/ai/eval_generated.py` (weeks built in code) | 194 cases, the same 13 categories, 12 more weeks |
+| **Planning agent**, hand-written (chat: look up, move, plan, ...) | `src/ai/eval_suite.py`, weeks in `fixtures/week.json` + `fixtures/eval_weeks/` | 73 cases, 15 categories, 5 students' weeks (57 until Nov 10; then delete and journal, see `overview_journal_delete.md`) |
+| **Planning agent**, generated | `src/ai/eval_generated.py` (weeks built in code) | 221 cases, the same 15 categories, 12 more weeks |
 | **Syllabus import** (upload → suggestions) | `fixtures/syllabi/` (answer key: `truth.json`) | 26 syllabi, 350 dated items, 11 categories |
 
 ### Why 251 planning cases, not 57

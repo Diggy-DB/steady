@@ -12,9 +12,15 @@ import openai
 from ai.llm import EXTRA_SAMPLING, LOG_FILE, SAMPLING, log_call, split_reasoning
 from ai.planning import (
     FIND_FREE_SLOTS_TOOL,
+    GET_JOURNAL_TOOL,
+    PROPOSE_DELETE_TOOL,
+    PROPOSE_JOURNAL_ENTRY_TOOL,
     PROPOSE_MOVE_EVENT_TOOL,
     PROPOSE_NEW_EVENT_TOOL,
     find_free_slots,
+    get_journal,
+    propose_delete,
+    propose_journal_entry,
     propose_move_event,
     propose_new_event,
 )
@@ -28,6 +34,9 @@ TOOLS = {
     "find_free_slots": (FIND_FREE_SLOTS_TOOL, find_free_slots),
     "propose_new_event": (PROPOSE_NEW_EVENT_TOOL, propose_new_event),
     "propose_move_event": (PROPOSE_MOVE_EVENT_TOOL, propose_move_event),
+    "propose_delete": (PROPOSE_DELETE_TOOL, propose_delete),
+    "get_journal": (GET_JOURNAL_TOOL, get_journal),
+    "propose_journal_entry": (PROPOSE_JOURNAL_ENTRY_TOOL, propose_journal_entry),
 }
 
 SYSTEM_PROMPT = """You are Steady, a planning assistant for a student.
@@ -36,8 +45,11 @@ Current date and time: {now}.
 Rules:
 - Before answering anything about the user's schedule, look it up with get_schedule. Never guess.
 - To find time for something, use find_free_slots. Don't work out free time yourself.
-- You can't change the calendar. propose_new_event and propose_move_event only create suggestions
-  that the user accepts or declines, so say "I suggest", never "I added" or "I moved".
+- You can't change the calendar or the journal. The propose_ tools only create suggestions that the
+  user accepts or declines, so say "I suggest", never "I added", "I moved" or "I deleted".
+- Only use propose_delete when the user asks to delete, remove or cancel something. To make room,
+  suggest a move instead. Only use propose_journal_entry when the user asks you to add to or change
+  their journal; to change an entry, read it with get_journal first.
 - When you recommend a time for something, create it with propose_new_event or propose_move_event
   so the user can accept it. Don't only describe it.
 - If there isn't enough free time, consider moving an event marked changeable: true, or splitting
@@ -56,6 +68,15 @@ TIME_PATTERN = re.compile(r"\b\d{1,2}(:\d{2})?\s?(am|pm)\b|\b\d{1,2}:\d{2}\b", r
 NUDGE = (
     "You recommended times but didn't create any suggestions, so the user has nothing to accept. "
     "Create them now with propose_new_event or propose_move_event, then give your final answer."
+)
+
+# "I suggest deleting ..." / "I suggest adding ... to your journal" in an answer.
+SUGGESTED_CHANGE = re.compile(r"\bI(?:'ve| have)? suggest(?:ed|ing)?\b[^.!?]*\b(?:delet|remov|cancel|journal)", re.IGNORECASE)
+
+NUDGE_CHANGE = (
+    "You said you suggest a change but didn't create it, so the user has nothing to accept. If the user asked for "
+    "it, create it now with propose_delete or propose_journal_entry, then give your final answer. If not, answer "
+    "without saying you suggested it."
 )
 
 # A tool call written out as text, the way Qwen formats them: <tool_call>{"name": ..., "arguments": {...}}</tool_call>
@@ -193,6 +214,9 @@ def run_agent(
     training runs leave both out.
     """
     run_id = uuid.uuid4().hex[:8]  # groups this question's rounds in the log
+    # What the user asked, plus Steady's last reply (for "yes, delete it"): checked by the delete and journal tools.
+    previous = next((turn["content"] for turn in reversed(history or []) if turn["role"] == "assistant"), "")
+    ctx.asked = f"{previous}\n{question}"
     total_tokens, total_seconds = 0, 0.0  # for measuring speed in evals
     searched_free_time, proposals, nudged = False, 0, False  # for the reminder below
     failed_calls: dict[tuple, str] = {}  # tool calls that returned an error, so repeats can be refused
@@ -251,6 +275,13 @@ def run_agent(
                 messages.append({"role": "system", "content": NUDGE})
                 if verbose:
                     print(f"round {round_number}: answered with times but no proposals; reminding the model")
+                continue
+            if not proposals and not nudged and SUGGESTED_CHANGE.search(answer):  # "I suggest deleting X", nothing made
+                nudged = True
+                messages.append({"role": "assistant", "content": answer})
+                messages.append({"role": "system", "content": NUDGE_CHANGE})
+                if verbose:
+                    print(f"round {round_number}: said it suggests a delete or journal note but made none; reminding")
                 continue
             if verbose:
                 print(f"round {round_number}: answered ({seconds}s)")

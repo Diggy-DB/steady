@@ -7,7 +7,6 @@ import AuthForm from "./components/AuthForm";
 import MemoryPanel from "./components/MemoryPanel";
 import ProfilePanel, { profileIsEmpty } from "./components/ProfilePanel";
 import { ai } from "./lib/ai";
-import { mockAIOverview } from "./data/mockData";
 import { supabase } from "./lib/supabase";
 import {
   addEvent,
@@ -31,6 +30,7 @@ function App() {
   const [selectedDate, setSelectedDate] = useState(null);
   const [showMemories, setShowMemories] = useState(false);
   const [profile, setProfile] = useState(null);
+  const [chatRequest, setChatRequest] = useState(null); // a message for the chat to send, e.g. from the overview
   const [showProfile, setShowProfile] = useState(false);
 
   // Keep track of who is signed in.
@@ -186,7 +186,7 @@ function App() {
         </div>
       </div>
       {error && <p className="error">{error}</p>}
-      <AIOverview overview={mockAIOverview} />
+      <AIOverview onAsk={(text) => setChatRequest({ id: Date.now(), text })} />
       <MonthCalendar
         year={shown.year}
         month={shown.month}
@@ -225,7 +225,7 @@ function App() {
           onClose={closeProfile}
         />
       )}
-      <ChatWidget events={data.events} onCalendarChanged={reload} />
+      <ChatWidget events={data.events} onCalendarChanged={reload} request={chatRequest} />
     </div>
   );
 }
