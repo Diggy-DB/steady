@@ -112,6 +112,23 @@ NUDGE_CHANGE = (
     "without saying you suggested it."
 )
 
+REMINDER_PREFIX = "(Automatic reminder from the Steady app, not from the user.) "
+
+
+def reminder(text: str) -> dict:
+    """A reminder from the app in the middle of a chat (NUDGE or NUDGE_CHANGE).
+
+    Sent as a user message, labelled as coming from the app. It used to be a system message, but Qwen3.5's chat
+    template refuses any system message after the first one, so on vLLM every reminder became an HTTP 400 and the
+    chat failed. Ollama (on the Mac) doesn't use that template, which is why only the pod broke.
+    """
+    return {"role": "user", "content": REMINDER_PREFIX + text}
+
+
+def is_reminder(message: dict) -> bool:
+    return message["role"] == "user" and str(message.get("content", "")).startswith(REMINDER_PREFIX)
+
+
 # A tool call written out as text, the way Qwen formats them: <tool_call>{"name": ..., "arguments": {...}}</tool_call>
 TOOL_CALL_TEXT = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 
@@ -313,6 +330,7 @@ def run_agent(
     ctx.asked = f"{previous}\n{question}"
     total_tokens, total_seconds = 0, 0.0  # for measuring speed in evals
     searched_free_time, proposals, nudged = False, 0, False  # for the reminder below
+    redone = 0  # rounds redone without thinking (training data leaves these runs out)
     failed_calls: dict[tuple, str] = {}  # tool calls that returned an error, so repeats can be refused
     made: list[str] = []  # what each successful proposal suggested, for the answer if it runs out of rounds
     messages = [
@@ -370,6 +388,7 @@ def run_agent(
             if tool_calls or finish != "length" or attempt == "no thinking":
                 break
             request = {**request, "max_tokens": 1500, "extra_body": {**EXTRA_SAMPLING, **thinking_off(str(client.base_url))}}
+            redone += 1
             if verbose:
                 print(f"round {round_number}: thinking ran out of tokens; asking again without thinking")
 
@@ -378,14 +397,14 @@ def run_agent(
             if searched_free_time and not proposals and not nudged and TIME_PATTERN.search(answer):
                 nudged = True
                 messages.append({"role": "assistant", "content": answer})
-                messages.append({"role": "system", "content": NUDGE})
+                messages.append(reminder(NUDGE))
                 if verbose:
                     print(f"round {round_number}: answered with times but no proposals; reminding the model")
                 continue
             if not proposals and not nudged and SUGGESTED_CHANGE.search(answer):  # "I suggest deleting X", nothing made
                 nudged = True
                 messages.append({"role": "assistant", "content": answer})
-                messages.append({"role": "system", "content": NUDGE_CHANGE})
+                messages.append(reminder(NUDGE_CHANGE))
                 if verbose:
                     print(f"round {round_number}: said it suggests a delete or journal note but made none; reminding")
                 continue
@@ -405,6 +424,7 @@ def run_agent(
                 "tokens": total_tokens,
                 "seconds": round(total_seconds, 1),
                 "nudged": nudged,
+                "redone": redone,
             }
 
         # Send the tool call back as part of the conversation, with its thinking.
@@ -444,4 +464,5 @@ def run_agent(
         "tokens": total_tokens,
         "seconds": round(total_seconds, 1),
         "nudged": nudged,
+        "redone": redone,
     }

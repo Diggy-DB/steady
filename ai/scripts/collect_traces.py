@@ -4,15 +4,21 @@ For each task the model gets several tries. A try is kept only if it passes ever
 finished on its own. Of the kept tries, the one with the FEWEST tokens becomes the training
 example: the model learns from its own shortest correct answers (the "think less" idea).
 
-Tries that passed only after the code reminder ("you recommended times but created no
-suggestions") are used when no try passed without it: the text-only answer and the reminder
-are cut out, so the example shows the model proposing directly. If its later thinking mentions
-the reminder, the try is skipped, so the model doesn't learn to expect a reminder. Such examples
-are marked "reminded": true in their meta, so they can be filtered out later.
+Tries that passed only after a code reminder ("you recommended times but created no
+suggestions", or "you said you suggest a delete but made none") are used when no try passed
+without one: the text-only answer and the reminder are cut out, so the example shows the model
+proposing directly. If its later thinking mentions the reminder, the try is skipped, so the model
+doesn't learn to expect a reminder. Such examples are marked "reminded": true in their meta.
+
+Never kept: tries where a round ran out of thinking tokens and was redone without thinking (the
+model would learn to skip thinking), and tries with a tool call whose arguments aren't a JSON
+object (Qwen3.5's chat template can't show them; vLLM turns them into {}).
 
 Examples go to data/<date>-<model>.jsonl in the chat format fine-tuning tools read (Hugging Face
 TRL, Unsloth): one JSON object per line with "messages" and "tools". The model's thinking is in
-"reasoning_content", which Qwen's chat template turns back into <think>...</think>.
+"reasoning_content", which Qwen's chat template turns back into <think>...</think>. Tool-call
+arguments are objects, not JSON text: Qwen3.5's template needs that (vLLM converts them the same
+way when it serves the model), and the "tools" are the ones the agent offered for that question.
 
 Examples (run from the ai/ folder):
     uv run scripts/collect_traces.py --tasks 20 --samples 3
@@ -28,7 +34,7 @@ from datetime import datetime
 
 import openai
 
-from ai.agent import NUDGE, TOOLS
+from ai.agent import is_reminder, offered_tools
 from ai.evals import run_scenario
 from ai.llm import AI_DIR, load_settings, make_client
 from ai.synth import make_task
@@ -42,7 +48,7 @@ def without_reminder(run: dict) -> dict | None:
     """A reminded run with the text-only answer and the reminder cut out, or None if the
     model's later thinking refers to the reminder."""
     messages = run["messages"]
-    i = next(k for k, m in enumerate(messages) if m["role"] == "system" and m["content"] == NUDGE)
+    i = next(k for k, m in enumerate(messages) if is_reminder(m))
     later = messages[i + 1 :]
     thinking = " ".join(m.get("reasoning_content") or "" for m in later) + " " + run["reasoning"]
     if any(hint in thinking.lower() for hint in REMINDER_HINTS):
@@ -50,12 +56,37 @@ def without_reminder(run: dict) -> dict | None:
     return {**run, "messages": messages[: i - 1] + later}  # i - 1 is the answer that got reminded
 
 
-def training_example(run: dict, meta: dict) -> dict:
-    """One conversation in the format TRL and Unsloth read, ending with the model's final answer."""
+def with_argument_objects(message: dict) -> dict | None:
+    """The message with each tool call's arguments as an object; None if one isn't a JSON object."""
+    if not message.get("tool_calls"):
+        return message
+    calls = []
+    for call in message["tool_calls"]:
+        arguments = call["function"]["arguments"]
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments) if arguments.strip() else {}
+            except json.JSONDecodeError:
+                return None
+        if not isinstance(arguments, dict):
+            return None
+        calls.append({"id": call["id"], "type": "function", "function": {"name": call["function"]["name"], "arguments": arguments}})
+    return {**message, "tool_calls": calls}
+
+
+def training_example(run: dict, meta: dict) -> dict | None:
+    """One conversation in the format TRL and Unsloth read, ending with the model's final answer,
+    or None if it can't be one (see the top of this file)."""
+    if run.get("redone"):
+        return None
+    messages = [with_argument_objects(m) for m in run["messages"]]
+    if any(m is None for m in messages):
+        return None
+    question = next(m["content"] for m in messages if m["role"] == "user")
     final = {"role": "assistant", "content": run["answer"], "reasoning_content": run["reasoning"]}
     return {
-        "messages": [*run["messages"], final],
-        "tools": [definition for definition, _ in TOOLS.values()],
+        "messages": [*messages, final],
+        "tools": offered_tools("\n" + question),  # what run_agent offered: ctx.asked is "<no earlier reply>\n<question>"
         "meta": meta,
     }
 
@@ -108,20 +139,21 @@ def main() -> None:
             task, tries = result
             kind = task.name.rsplit("-", 1)[0]
             passed = sum(t["passed"] for t in tries)
-            plain = [t for t in tries if t["passed"] and not t["nudged"]]
-            reminded = [cut for t in tries if t["passed"] and t["nudged"] if (cut := without_reminder(t))]
+            meta = {"task": task.name, "category": task.category, "seed": int(task.name.rsplit("-", 1)[1]),
+                    "question": task.question, "model": model, "tries": len(tries), "passed_tries": passed}
+            plain = [(t, ex) for t in tries if t["passed"] and not t["nudged"]
+                     if (ex := training_example(t, {**meta, "tokens": t["tokens"], "reminded": False}))]
+            reminded = [(t, ex) for t in tries if t["passed"] and t["nudged"] if (cut := without_reminder(t))
+                        if (ex := training_example(cut, {**meta, "tokens": t["tokens"], "reminded": True}))]
             good = plain or reminded
             stats[kind].update(tasks=1, tries=len(tries), passed=passed, kept=bool(good),
                                kept_reminded=bool(good) and not plain)
 
             note = ""
             if good:
-                best = min(good, key=lambda t: t["tokens"])
-                meta = {"task": task.name, "seed": int(task.name.rsplit("-", 1)[1]), "question": task.question,
-                        "model": model, "tokens": best["tokens"], "tries": len(tries), "passed_tries": passed,
-                        "reminded": not plain}
+                best, example = min(good, key=lambda pair: pair[0]["tokens"])
                 with out.open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(training_example(best, meta), ensure_ascii=False) + "\n")
+                    f.write(json.dumps(example, ensure_ascii=False) + "\n")
                 note = f", kept the shortest ({best['tokens']} tokens{', reminder cut out' if not plain else ''})"
             failures = Counter(f for t in tries for f in t["failures"]).most_common(1)
             print(f"{task.name}: {passed}/{len(tries)} tries passed{note}"

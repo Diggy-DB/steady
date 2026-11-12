@@ -37,20 +37,59 @@ def test_example_is_a_complete_conversation():
     json.dumps(ex)  # must be plain JSON
 
 
-def test_example_renders_with_qwens_chat_template():
+def qwen35_tokenizer():
     transformers = pytest.importorskip("transformers")
     try:
-        tokenizer = transformers.AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Thinking-2507")
+        return transformers.AutoTokenizer.from_pretrained("Qwen/Qwen3.5-4B")
     except OSError:
         pytest.skip("tokenizer not downloaded and no network")
+
+
+def test_example_renders_with_qwen35s_chat_template():
     ex = example()
-    text = tokenizer.apply_chat_template(ex["messages"], tools=ex["tools"], tokenize=False)
-    assert "<tool_call>" in text and "<tool_response>" in text and text.rstrip().endswith("<|im_end|>")
+    text = qwen35_tokenizer().apply_chat_template(ex["messages"], tools=ex["tools"], tokenize=False)
+    assert "<tool_call>\n<function=get_schedule>\n<parameter=start_date>\n2026-10-06\n</parameter>" in text
+    assert "<tool_response>" in text and text.rstrip().endswith("<|im_end|>")
+
+
+def test_tool_arguments_become_objects():
+    call = next(m for m in example()["messages"] if m.get("tool_calls"))["tool_calls"][0]
+    assert call["function"]["arguments"] == {"start_date": "2026-10-06", "end_date": "2026-10-06"}
+
+
+def test_offers_the_tools_the_agent_offered():
+    names = {t["function"]["name"] for t in example()["tools"]}
+    assert "propose_delete" not in names and "propose_journal_entry" not in names  # not asked about
+    tuesday = {"start_date": "2026-10-06", "end_date": "2026-10-06"}
+    client = FakeClient([reply(tool_calls=[("get_schedule", tuesday)]), reply("Which one?")])
+    run = run_scenario(client, "fake", Scenario("del", "Delete my gym tomorrow.", [calls("get_schedule")]))
+    names = {t["function"]["name"] for t in collect_traces.training_example(run, {})["tools"]}
+    assert "propose_delete" in names
+
+
+def test_skips_runs_redone_without_thinking_or_with_broken_arguments():
+    tuesday = {"start_date": "2026-10-06", "end_date": "2026-10-06"}
+    client = FakeClient([reply(tool_calls=[("get_schedule", tuesday)]), reply("Work 1-5 PM.")])
+    run = run_scenario(client, "fake", Scenario("tomorrow", "What do I have tomorrow?", [calls("get_schedule")]))
+    assert collect_traces.training_example({**run, "redone": 1}, {}) is None
+    broken = [{**m, "tool_calls": [{**c, "function": {**c["function"], "arguments": '{"start_date": '}} for c in m["tool_calls"]]}
+              if m.get("tool_calls") else m for m in run["messages"]]
+    assert collect_traces.training_example({**run, "messages": broken}, {}) is None
+
+
+def test_agent_reminder_renders_with_qwen35s_chat_template():
+    """Qwen3.5's template refuses a system message after the first; the agent's reminders must still render."""
+    from ai.agent import NUDGE, reminder
+
+    run = reminded_run("Propose the gym slot at noon.")
+    messages = [m for m in run["messages"] if "tool_calls" not in m and m["role"] != "tool"] + [reminder(NUDGE)]
+    text = qwen35_tokenizer().apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    assert "Automatic reminder from the Steady app" in text
 
 
 
 def reminded_run(later_thinking: str) -> dict:
-    from ai.agent import NUDGE
+    from ai.agent import NUDGE, reminder
 
     return {
         "messages": [
@@ -59,7 +98,7 @@ def reminded_run(later_thinking: str) -> dict:
             {"role": "assistant", "content": "", "tool_calls": [{"id": "c1"}], "reasoning_content": "look up"},
             {"role": "tool", "tool_call_id": "c1", "content": "{}"},
             {"role": "assistant", "content": "You could go at 12 PM."},  # described, didn't propose
-            {"role": "system", "content": NUDGE},
+            reminder(NUDGE),
             {"role": "assistant", "content": "", "tool_calls": [{"id": "c2"}], "reasoning_content": later_thinking},
             {"role": "tool", "tool_call_id": "c2", "content": "{}"},
         ],
@@ -72,6 +111,7 @@ def test_reminder_is_cut_out():
     cut = collect_traces.without_reminder(reminded_run("Propose the gym slot at noon."))
     roles = [m["role"] for m in cut["messages"]]
     assert roles == ["system", "user", "assistant", "tool", "assistant", "tool"]
+    assert not any("Automatic reminder" in str(m["content"]) for m in cut["messages"])
     assert "You could go at 12 PM." not in [m["content"] for m in cut["messages"]]
 
 

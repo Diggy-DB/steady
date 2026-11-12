@@ -97,6 +97,8 @@ def words(title: str) -> tuple[set[str], set[str]]:
     Any word of 3+ letters counts (it used to be a fixed list, so 'Discussion post 1' could never match)."""
     tokens = re.findall(r"[a-z]+|\d+", title.lower().replace("-", " "))
     tokens = [ALIASES.get(t, t) for t in tokens]
+    # Plurals: "Finals" is "Final" ("MTH 234 Finals" was scored as missing the Final Exam). Both sides alike.
+    tokens = [t[:-1] if t.isalpha() and len(t) > 4 and t.endswith("s") and not t.endswith("ss") else t for t in tokens]
     code_letters = {t for t, nxt in zip(tokens, tokens[1:] + [""]) if t.isalpha() and len(t) <= 4 and nxt.isdigit() and len(nxt) == 3}
     meaningful = {t for t in tokens if t.isalpha() and len(t) >= 3 and t not in FILLER and t not in code_letters}
     return meaningful, {t for t in tokens if t.isdigit() and len(t) < 3}

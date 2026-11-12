@@ -16,14 +16,24 @@ from zoneinfo import ZoneInfo
 
 from ai.evals import (
     Scenario,
+    adds_task,
+    avoids,
     calls,
+    deletes,
+    deletes_nothing,
+    edits_journal,
     finishes,
+    journals,
+    looks_up,
     mentions_all,
     mentions_any,
     moves,
+    never_touches,
     new_events_named,
+    no_moves,
     proposes_at_least,
     proposes_nothing,
+    unasked_changes,
 )
 from ai.planning import free_gaps, round_up
 from ai.schedule import FixtureStore, ToolContext, format_time, overlaps
@@ -99,6 +109,18 @@ def upcoming(ctx: ToolContext, day: date) -> list[dict]:
     return ctx.store.events(USER, start, end) if start < end else []
 
 
+def end_of(ctx: ToolContext, day: date) -> datetime:
+    """Midnight after `day`: work for something due that day has to end by then."""
+    return datetime.combine(day + timedelta(days=1), time.min, tzinfo=ctx.now.tzinfo)
+
+
+def free_minutes(ctx: ToolContext, last_day: date) -> float:
+    """Free time from now to the end of `last_day`, counting gaps of an hour or more."""
+    return sum((end - start).total_seconds() // 60
+               for offset in range((last_day - ctx.now.date()).days + 1)
+               for start, end in free_gaps(ctx, ctx.now.date() + timedelta(days=offset), timedelta(minutes=60)))
+
+
 def short_name(event: dict) -> str:
     """The words an answer should contain to mention this event, e.g. 'phy 183' or 'gym'."""
     name = event["name"].lower()
@@ -166,7 +188,8 @@ def task_time(rng: random.Random, ctx: ToolContext):
                 [f"I still need to do my {task['name']}. When should I work on it?",
                  f"Help me find time for my {task['name']} before it's due."]
             )
-            return "task_time", question, [proposes_at_least(1), new_events_named((course,), minutes=hours * 60), finishes()]
+            checks = [proposes_at_least(1), new_events_named((course,), minutes=hours * 60, before=end_of(ctx, due)), finishes()]
+            return "task_time", question, checks
     return None
 
 
@@ -202,7 +225,144 @@ def weekly_goal(rng: random.Random, ctx: ToolContext):
     return "weekly_goal", question, [new_events_named((word,), count=goal - already), finishes()]
 
 
-TASK_TYPES = [look_up, move_flexible, move_fixed, task_time, activity_today, weekly_goal]
+# ---- Added Nov 12 for the current agent: several goals at once, deletes, journal, tasks, "next week", conflicts.
+# The research report's main gap: no task type combined an activity goal with assignments ("week plan").
+
+CANT = ("fixed", "can't", "cannot", "not able", "unable")
+# Different notes from the eval's journal cases.
+NOTES = [("finally understood the {course} homework", "homework"), ("went for a long walk to clear my head", "walk"),
+         ("called my parents for an hour", "parents"), ("missed the bus and was late to class", "bus"),
+         ("felt really stressed about the exam", "stressed")]
+# A journal entry from yesterday, the change the student asks for, and a part that has to stay.
+JOURNAL_FIXES = [("Studied for two hours and then called home.", "two hours", "three hours", "called home"),
+                 ("Planned the group meeting for Tuesday, then did laundry.", "Tuesday", "Wednesday", "laundry"),
+                 ("Felt tired all day but still made it to practice.", "tired", "energized", "practice"),
+                 ("Worked at the library until dinner with Sam.", "library", "cafe", "sam")]
+
+
+def multi_goal(rng: random.Random, ctx: ToolContext):
+    """An activity N times this week plus the hours for one or two assignments, in one request."""
+    name = rng.choice([a for a in ACTIVITIES if a != "Study session"])  # "study" would match the work blocks too
+    phrase, word = ACTIVITIES[name]
+    week_start = date.fromisoformat(ctx.store.data["events"][0]["start"][:10])
+    week_end = week_start + timedelta(days=6)
+    already = sum(1 for e in ctx.store.data["events"]
+                  if e["name"] == name and week_start <= datetime.fromisoformat(e["start"]).date() <= week_end)
+    tasks = [t for t in ctx.store.data["tasks"] if date.fromisoformat(t["due"]) > ctx.now.date()]
+    if not tasks:
+        return None
+    chosen = rng.sample(tasks, min(len(tasks), rng.randint(1, 2)))
+    hours = {t["task_id"]: int(t["description"].split()[1]) for t in chosen}
+    if any(free_minutes(ctx, date.fromisoformat(t["due"])) < hours[t["task_id"]] * 60 + 120 for t in chosen):
+        return None
+    if free_minutes(ctx, week_end) < sum(hours.values()) * 60 + 2 * 60 + 240:
+        return None
+    goal = already + rng.randint(1, 2)
+    times = {1: "once", 2: "twice"}.get(goal, f"{goal} times")
+    work = " and ".join(f"my {t['name']}" for t in chosen)
+    question = rng.choice([f"This week I want to {phrase} {times} (an hour each) and still get {work} done. Plan it for me?",
+                           f"Can you fit {work} into my week, plus time to {phrase} {times}? An hour per session is fine."])
+    checks = [new_events_named((word,), count=goal - already)]
+    checks += [new_events_named((t["name"].split(" ")[0].lower(),), minutes=hours[t["task_id"]] * 60,
+                                before=end_of(ctx, date.fromisoformat(t["due"]))) for t in chosen]
+    return "multi_goal", question, checks
+
+
+def delete_event(rng: random.Random, ctx: ToolContext):
+    today = ctx.now.date()
+    for offset in rng.sample(range(0, 4), 4):
+        day = today + timedelta(days=offset)
+        events = upcoming(ctx, day)
+        names = [e["name"] for e in events]
+        candidates = [e for e in events if e["changeable"] and names.count(e["name"]) == 1]
+        if candidates:
+            event = rng.choice(candidates)
+            when = "today" if offset == 0 else DAYS[day.weekday()]
+            question = rng.choice([f"I'm not going to {event['name'].lower()} on {when}, take it off my calendar.",
+                                   f"Please remove {when}'s {event['name'].lower()}.",
+                                   f"Drop the {event['name'].lower()} on {when}, I don't need it."]).replace(" on today", " today")
+            return "delete_event", question, [deletes("event", event["event_id"])]
+    return None
+
+
+def delete_task(rng: random.Random, ctx: ToolContext):
+    task = rng.choice(ctx.store.data["tasks"])
+    question = rng.choice([f"My professor cancelled the {task['name']}. Remove it from my tasks.",
+                           f"Get rid of the {task['name']} task, please."])
+    return "delete_task", question, [deletes("task", task["task_id"])]
+
+
+def delete_fixed(rng: random.Random, ctx: ToolContext):
+    lectures = [e for e in ctx.store.data["events"] if not e["changeable"] and datetime.fromisoformat(e["start"]) > ctx.now]
+    if not lectures:
+        return None
+    event = rng.choice(lectures)
+    day = DAYS[datetime.fromisoformat(event["start"]).weekday()]
+    question = rng.choice([f"Delete my {event['name']} on {day}.", f"Can you cancel {day}'s {event['name']}?"])
+    return "delete_fixed", question, [deletes_nothing(), never_touches(event["event_id"]), mentions_any(*CANT)]
+
+
+def journal_add(rng: random.Random, ctx: ToolContext):
+    template, word = rng.choice(NOTES)
+    course = ctx.store.data["tasks"][0]["name"].split(" ")[0]
+    text = template.format(course=course)
+    day = ctx.now.date() - timedelta(days=rng.choice([0, 1]))
+    when = "today" if day == ctx.now.date() else "yesterday"
+    question = rng.choice([f"Put in my journal for {when} that I {text}.", f"Journal note for {when}: I {text}."])
+    return "journal_add", question, [journals(day.isoformat(), word), no_moves()]
+
+
+def journal_edit(rng: random.Random, ctx: ToolContext):
+    day = ctx.now.date() - timedelta(days=1)
+    entry, old, new, keep = rng.choice(JOURNAL_FIXES)
+    ctx.store.data.setdefault("journals", []).append(
+        {"journal_id": "sj1", "user_id": USER, "date": day.isoformat(), "information": entry})
+    question = rng.choice([f"In yesterday's journal, change '{old}' to '{new}'.",
+                           f"Fix my journal from yesterday: it should say {new}, not {old}."])
+    return "journal_edit", question, [edits_journal(day.isoformat(), has=(keep, new.lower()), lacks=(old.lower(),)), no_moves()]
+
+
+def new_task(rng: random.Random, ctx: ToolContext):
+    day = ctx.now.date() + timedelta(days=rng.randint(1, 4))
+    thing, words = rng.choice([("email my advisor", ("advisor",)), ("return the library books", ("library", "book")),
+                               ("register for next semester's classes", ("regist", "enroll")),
+                               ("buy a lab notebook", ("notebook",))])
+    question = rng.choice([f"Add a task to {thing} by {DAYS[day.weekday()]}.", f"Can you put '{thing}' on my to-do list for {DAYS[day.weekday()]}?"])
+    return "new_task", question, [adds_task(words, day.isoformat()), no_moves()]
+
+
+def next_week(rng: random.Random, ctx: ToolContext):
+    """Asked during the week before the generated one: "next week" is the week with the events."""
+    monday = date.fromisoformat(ctx.store.data["events"][0]["start"][:10])
+    tz = ctx.now.tzinfo
+    now = datetime.combine(monday - timedelta(days=rng.randint(2, 6)), time(rng.randint(9, 18), 0), tzinfo=tz)
+    courses = [" ".join(t["name"].split(" ")[:2]).lower() for t in ctx.store.data["tasks"]]  # e.g. "phy 183"
+    question = rng.choice(["What's due next week?", "Which assignments do I have due next week?", "Anything due next week I should know about?"])
+    checks = [calls("get_schedule"), looks_up(monday.isoformat()), mentions_all(*courses), proposes_nothing()]
+    return "next_week", question, checks, now
+
+
+def conflict(rng: random.Random, ctx: ToolContext):
+    fixed = [e for e in ctx.store.data["events"] if not e["changeable"] and datetime.fromisoformat(e["start"]) > ctx.now]
+    names = [e["name"] for e in ctx.store.data["events"]]
+    movable = [e for e in ctx.store.data["events"]
+               if e["changeable"] and names.count(e["name"]) == 1 and datetime.fromisoformat(e["start"]) > ctx.now]
+    if not fixed or not movable:
+        return None
+    blocker, event = rng.choice(fixed), rng.choice(movable)
+    start = datetime.fromisoformat(blocker["start"]) + timedelta(minutes=15)
+    day = DAYS[start.weekday()]
+    question = f"Move my {event['name'].lower()} to {day} at {format_time(start)}."
+    word = blocker["name"].split(" ")[0].lower()
+    return "conflict", question, [mentions_any(word, "conflict", "overlap", "busy", "fixed"), never_touches(blocker["event_id"]),
+                                  avoids("i moved", "i've moved")]
+
+
+TASK_TYPES = [look_up, move_flexible, move_fixed, task_time, activity_today, weekly_goal, multi_goal, delete_event, delete_task,
+              delete_fixed, journal_add, journal_edit, new_task, next_week, conflict]
+# The category each type counts as, for the checks that forbid deleting or journaling when nobody asked.
+CATEGORY = {"delete_event": "delete", "delete_task": "delete", "delete_fixed": "delete", "journal_add": "journal",
+            "journal_edit": "journal"}
 
 
 def make_task(seed: int) -> Scenario:
@@ -217,5 +377,9 @@ def make_task(seed: int) -> Scenario:
         for task_type in rng.sample(TASK_TYPES, len(TASK_TYPES)):
             made = task_type(rng, ctx)
             if made:
-                name, question, checks = made
-                return Scenario(f"{name}-{seed}", question, checks, now=f"{now:%Y-%m-%d %H:%M}", user_id=USER, data=data)
+                name, question, checks = made[:3]
+                when = made[3] if len(made) > 3 else now
+                category = CATEGORY.get(name, name)
+                checks = [*checks, *unasked_changes(category), finishes()]
+                return Scenario(f"{name}-{seed}", question, checks, now=f"{when:%Y-%m-%d %H:%M}", user_id=USER,
+                                data=ctx.store.data, category=category)

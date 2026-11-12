@@ -8,6 +8,7 @@ A check is a function that looks at one run and returns None if it passed,
 or a short message saying what went wrong.
 """
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -84,6 +85,24 @@ def calls(tool: str) -> Check:
         return None if any(c["name"] == tool for c in t.tool_calls) else f"never called {tool}"
 
     return described(check, f"calls {tool}")
+
+
+def looks_up(day: str) -> Check:
+    """get_schedule was called for a range that includes `day` (YYYY-MM-DD). Without it, an answer about the
+    wrong day can pass when the same class meets at the same time on several days (found by a reviewer)."""
+
+    def check(t: Transcript) -> str | None:
+        for c in t.tool_calls:
+            if c["name"] == "get_schedule":
+                try:
+                    args = json.loads(c["arguments"])
+                except ValueError:
+                    continue
+                if str(args.get("start_date", "")) <= day <= str(args.get("end_date", "")):
+                    return None
+        return f"never looked up {day}"
+
+    return described(check, f"looks up {day_text(day)}")
 
 
 def finishes() -> Check:
@@ -168,6 +187,19 @@ def deletes(what: str, item_id: str) -> Check:
         return f"also suggested deleting {', '.join(others)}" if others else None
 
     return described(check, f"suggests deleting {what} {item_id}, and nothing else")
+
+
+def adds_task(words: tuple[str, ...], day: str) -> Check:
+    """A new-task suggestion whose name has any of `words`, due on `day` (YYYY-MM-DD)."""
+
+    def check(t: Transcript) -> str | None:
+        for s in t.suggestions:
+            c = s["proposed_change"]
+            if s["type"] == "CREATE_TASK" and c["due"][:10] == day and any(w in c["name"].lower() for w in words):
+                return None
+        return f"no new task like {words[0]!r} due {day}"
+
+    return described(check, f"suggests a new task like {' / '.join(words)} due {day_text(day)}")
 
 
 def deletes_nothing() -> Check:
@@ -466,6 +498,7 @@ def run_scenario(client: openai.OpenAI, model: str, scenario: Scenario, log_path
         "answer": result["answer"],
         "run_id": result["run_id"],
         "nudged": result["nudged"],
+        "redone": result.get("redone", 0),
         # The whole conversation, for building training examples (not saved in eval results).
         "messages": result["messages"],
         "reasoning": result["reasoning"],

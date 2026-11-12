@@ -40,5 +40,32 @@ def test_generated_weeks_have_no_overlapping_events():
 
 def test_all_task_types_show_up():
     kinds = Counter(t.name.rsplit("-", 1)[0] for t in TASKS)
-    assert set(kinds) == {"look_up", "move_flexible", "move_fixed", "task_time", "activity_today", "weekly_goal"}
-    assert min(kinds.values()) >= 10  # no type is starved
+    assert set(kinds) == {"look_up", "move_flexible", "move_fixed", "task_time", "activity_today", "weekly_goal", "multi_goal",
+                          "delete_event", "delete_task", "delete_fixed", "journal_add", "journal_edit", "new_task", "next_week",
+                          "conflict"}
+    assert min(kinds.values()) >= 5  # no type is starved
+
+
+def test_every_task_forbids_unasked_deletes_and_journal_entries():
+    for task in TASKS:
+        described = [c.text for c in task.checks]
+        if task.category != "delete":
+            assert "suggests deleting nothing" in described, task.name
+        if task.category != "journal":
+            assert "suggests no journal entry" in described, task.name
+        assert any("finish" in d for d in described), task.name
+
+
+def test_next_week_is_asked_the_week_before():
+    for task in TASKS:
+        if task.name.startswith("next_week"):
+            monday = date.fromisoformat(task.data["events"][0]["start"][:10])
+            asked = date.fromisoformat(task.now[:10])
+            assert 2 <= (monday - asked).days <= 6, task.name
+
+
+def test_journal_edit_has_an_entry_to_edit():
+    for task in TASKS:
+        if task.name.startswith("journal_edit"):
+            (entry,) = task.data["journals"]
+            assert entry["date"] < task.now[:10]

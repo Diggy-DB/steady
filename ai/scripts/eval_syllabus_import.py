@@ -108,7 +108,7 @@ def main() -> None:
                 print(line[:400])
 
     report(results, truth, label, args.runs)
-    out = AI_DIR / "evals" / f"{datetime.now():%Y-%m-%d-%H%M}-syllabus-import-{label.replace(':', '_').replace(' + ', '+')}.json"
+    out = AI_DIR / "evals" / f"{datetime.now():%Y-%m-%d-%H%M}-syllabus-import-{label.replace(':', '_').replace('/', '_').replace(' + ', '+')}.json"
     total = {k: sum(r[k] for r in results) for k in ("items", "found", "made_up", "seconds")}
     out.write_text(json.dumps({"label": label, "args": vars(args), "total": total, "results": results}, indent=2, default=str))
 

@@ -638,6 +638,14 @@ def propose_journal_entry(ctx: ToolContext, date: str, text: str, replace: bool 
         return {"suggestion_id": suggestion["suggestion_id"], "status": "PENDING",
                 "summary": f"Suggested an edited journal entry for {format_day(day)}; the user sees it before and "
                            "after. Nothing changes until the user accepts it."}
+    # The 4B sometimes suggested the same note twice ("Missed the bus..." and "I missed the bus..."): two cards.
+    words = key_words(text) - {"i", "my", "me"}
+    for s in ctx.store.suggestions(ctx.user_id, status="PENDING"):
+        if s["type"] == "ADD_JOURNAL" and s["proposed_change"]["date"] == day.isoformat():
+            theirs = key_words(s["proposed_change"]["text"]) - {"i", "my", "me"}
+            if words and len(words & theirs) >= 0.8 * len(words | theirs):
+                raise ToolError(f"you already suggested this for the journal on {format_day(day)} ({s['suggestion_id']}); "
+                                "it's waiting for the user, so don't suggest it again")
     suggestion = ctx.store.add_suggestion(ctx.user_id, {
         "type": "ADD_JOURNAL", "target_id": None,
         "description": "Add to your journal" if existing else "Start your journal entry",

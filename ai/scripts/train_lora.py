@@ -1,18 +1,24 @@
 """Fine-tune the model on the collected examples with LoRA. Runs on a GPU pod (deploy/runpod_train.sh).
 
-LoRA leaves the 4B original numbers frozen and trains small extra matrices next to some of its
-layers (about 33M numbers, ~130 MB). That fits on one 24 GB GPU, and the result is a small
-"adapter" that vLLM loads on top of the original model (`--enable-lora`).
+LoRA leaves the 4B original numbers frozen and trains small extra matrices next to its text layers
+(about 32M numbers). That fits on one 24 GB GPU. The result is a small "adapter"; scripts/merge_lora.py
+then adds it into a full copy of the model, which vLLM serves like the original (vLLM can't load
+adapters for Qwen3.5's linear-attention layers).
+
+Qwen3.5-4B is a picture-and-text model. This trains the text part only (transformers loads it alone
+as Qwen3_5ForCausalLM); the picture reader stays as it is.
 
 The model learns only from its own turns: thinking, tool calls and final answers. The system
 prompt, the user's question and the tool results are context it reads, not text to imitate.
 
 Run from the ai/ folder. The training libraries aren't project dependencies (they'd add 2 GB
-to every laptop install), so they're added for this one run with `--with`:
+to every laptop install), so they're added for this one run with `--with`. On a GPU, also add
+flash-linear-attention: without it the linear-attention layers use a plain-torch path that is many
+times slower.
 
-    uv run --with torch --with peft==0.19.1 scripts/train_lora.py                       # train
+    uv run --with torch --with peft==0.21.2 --with "flash-linear-attention[cuda]==0.6.0" scripts/train_lora.py
     uv run scripts/train_lora.py --check                                               # only count, any computer
-    uv run --with torch --with peft==0.19.1 scripts/train_lora.py --base <tiny model> --max-steps 2   # a quick test
+    uv run --with torch --with peft==0.21.2 scripts/train_lora.py --base <tiny model> --max-steps 2   # a quick test
 """
 
 import argparse
@@ -25,13 +31,17 @@ from collections import Counter
 from pathlib import Path
 
 AI_DIR = Path(__file__).resolve().parents[1]
-BASE_MODEL = "Qwen/Qwen3-4B-Thinking-2507"
-# The layers LoRA adds its matrices to: attention (q, k, v, o) and the feed-forward part (gate, up, down).
-# These are also the ones vLLM can load an adapter for.
-TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+BASE_MODEL = "Qwen/Qwen3.5-4B"
+# The layers LoRA adds its matrices to, in all 32 text layers: the 8 full-attention layers (q, k, v, o),
+# the 24 linear-attention layers (Gated DeltaNet: qkv, z, b, a in; out), and every feed-forward part.
+TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj",
+                  "in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a", "out_proj",
+                  "gate_proj", "up_proj", "down_proj"]
 
-# How Qwen's chat template marks the model's own turns.
+# How Qwen's chat template marks the model's own turns. Every turn starts "<think>\n", which the server
+# writes itself (it ends the prompt), so the model never has to produce it.
 ASSISTANT_START = "<|im_start|>assistant\n"
+THINK_START = "<think>\n"
 TURN_END = "<|im_end|>"
 
 
@@ -49,11 +59,13 @@ def load_examples(pattern: str, skip_reminded: bool) -> tuple[list[dict], int]:
 
 
 def assistant_spans(text: str) -> list[tuple[int, int]]:
-    """Character ranges of the model's own turns: from after "<|im_start|>assistant\\n" up to and
+    """Character ranges of the model's own turns: from after "<|im_start|>assistant\\n<think>\\n" up to and
     including "<|im_end|>", so the model also learns where to stop."""
     spans, position = [], 0
     while (start := text.find(ASSISTANT_START, position)) != -1:
         start += len(ASSISTANT_START)
+        if text.startswith(THINK_START, start):
+            start += len(THINK_START)
         end = text.find(TURN_END, start)
         end = len(text) if end == -1 else end + len(TURN_END)
         spans.append((start, end))
@@ -61,10 +73,23 @@ def assistant_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
+def with_argument_objects(messages: list[dict]) -> list[dict]:
+    """Tool-call arguments as objects, as Qwen3.5's chat template needs (and vLLM does when serving).
+    Examples collected before Nov 12 have them as JSON text."""
+    out = []
+    for m in messages:
+        if m.get("tool_calls"):
+            m = {**m, "tool_calls": [
+                {**c, "function": {**c["function"], "arguments": json.loads(a) if isinstance(a := c["function"]["arguments"], str) else a}}
+                for c in m["tool_calls"]]}
+        out.append(m)
+    return out
+
+
 def tokenize(tokenizer, example: dict) -> tuple[list[int], list[int]]:
     """Turn one conversation into (token ids, labels). A label is the token itself where the model
     should learn it, and -100 ("ignore") everywhere else."""
-    text = tokenizer.apply_chat_template(example["messages"], tools=example["tools"], tokenize=False)
+    text = tokenizer.apply_chat_template(with_argument_objects(example["messages"]), tools=example["tools"], tokenize=False)
     encoded = tokenizer(text, return_offsets_mapping=True, add_special_tokens=False)
     spans = assistant_spans(text)
     labels, k = [], 0
@@ -136,7 +161,18 @@ def train(args, data: list[tuple], stats: Counter) -> None:
     torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Loading {args.base} on {device}...", flush=True)
-    model = AutoModelForCausalLM.from_pretrained(args.base, dtype=torch.bfloat16).to(device)
+    # The text part only. Its weights are stored as "model.language_model.layers..." and transformers renames
+    # them; if that ever failed, the layers would start from random numbers, so check nothing is missing.
+    model, info = AutoModelForCausalLM.from_pretrained(args.base, dtype=torch.bfloat16, output_loading_info=True)
+    missing = [k for k in info["missing_keys"] if k != "lm_head.weight"]  # lm_head is the embeddings (tied)
+    if missing:
+        raise SystemExit(f"{len(missing)} weights weren't found in {args.base}, e.g. {missing[:3]}")
+    model = model.to(device)
+    try:
+        import fla  # noqa: F401  (transformers uses its fast kernels when it's installed)
+    except ImportError:
+        if device == "cuda":
+            print("WARNING: flash-linear-attention isn't installed, so training is many times slower.", flush=True)
     model.config.use_cache = False
     # Keep only each layer's input during the forward pass and recompute the rest when computing
     # gradients: slower (~30%) but needs far less memory for long conversations.

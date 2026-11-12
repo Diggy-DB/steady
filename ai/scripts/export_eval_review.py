@@ -122,7 +122,12 @@ def names_for(text: str, data: dict) -> str:
         owner = "" if e["user_id"] == "user-1" else ", ANOTHER user's"
         return f"{match.group(0)} ({e['name']}, {start:%a} {clock_text(start.strftime('%H:%M'))}{owner})"
 
-    return re.sub(r"\b[a-z]{1,2}\d{1,2}\b", named, text)
+    if not events:
+        return text
+    # The week's own ids (longest first): "e2", but also generated ones like "g1e13", which a short pattern missed,
+    # so reviewers saw a bare "g1e13" and couldn't tell it was the Swim.
+    ids = sorted(events, key=len, reverse=True)
+    return re.sub(r"\b(?:" + "|".join(map(re.escape, ids)) + r")\b", named, text)
 
 
 def step_text(step, data: dict) -> str:

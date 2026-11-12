@@ -135,7 +135,8 @@ def test_reminds_once_when_times_are_recommended_without_proposals(logged):
     result = run_agent(client, "fake", context(), "When can I go to the gym?", verbose=False)
     assert result["nudged"] and result["answer"] == "I suggest the gym at 12 PM."
     reminder = client.requests[2]["messages"][-1]
-    assert reminder["role"] == "system" and "nothing to accept" in reminder["content"]
+    assert reminder["role"] == "user" and "nothing to accept" in reminder["content"]
+    assert reminder["content"].startswith("(Automatic reminder from the Steady app")
 
 
 def test_no_reminder_for_plain_questions(logged):

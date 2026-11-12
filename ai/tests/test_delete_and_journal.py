@@ -190,7 +190,7 @@ def test_the_model_reads_then_edits(ctx):
 
 
 def test_saying_it_suggests_a_delete_without_making_one_gets_a_reminder(ctx, monkeypatch):
-    from ai.agent import NUDGE_CHANGE, run_agent
+    from ai.agent import NUDGE_CHANGE, reminder, run_agent
     from test_agent import FakeClient, reply
 
     monkeypatch.setattr("ai.agent.log_call", lambda record, path=None: None)
@@ -200,7 +200,7 @@ def test_saying_it_suggests_a_delete_without_making_one_gets_a_reminder(ctx, mon
         reply("I suggest deleting tomorrow's gym session; accept it to remove it."),
     ])
     result = run_agent(client, "fake", ctx, "I'm skipping the gym tomorrow, remove it.", verbose=False)
-    assert result["nudged"] and client.requests[1]["messages"][-1] == {"role": "system", "content": NUDGE_CHANGE}
+    assert result["nudged"] and client.requests[1]["messages"][-1] == reminder(NUDGE_CHANGE)
     assert [s["type"] for s in ctx.store.suggestions("user-1")] == ["DELETE_EVENT"]
 
 
@@ -276,3 +276,13 @@ def test_a_delete_must_be_for_something_the_user_named(ctx, asked, item, allowed
     else:
         with pytest.raises(ToolError, match="didn't mention 'Study session'"):
             propose_delete(ctx, "event", item, "")
+
+
+def test_the_same_journal_note_isnt_suggested_twice(ctx):
+    ctx.asked = "Journal: I missed the bus and was late to class."
+    first = propose_journal_entry(ctx, "2026-10-05", "Missed the bus and was late to class.")
+    assert first["status"] == "PENDING"
+    with pytest.raises(ToolError, match="already suggested"):
+        propose_journal_entry(ctx, "2026-10-05", "I missed the bus and was late to class.")
+    # a different note for the same day is fine
+    assert propose_journal_entry(ctx, "2026-10-05", "Had pizza with Sam after the lab.")["status"] == "PENDING"
