@@ -1,52 +1,51 @@
+import { Box } from "./ui";
+import { ChevronLeft, ChevronRight } from "./ui/icons";
 import { dateString } from "../lib/data";
 
-// One month as a grid. The month to show and "today" now come from App (they used to be
-// fixed to October 2026), with buttons to move between months.
-// `marks` gives each day's number of events and tasks ({"2027-01-22": {events: 1, tasks: 2}}), shown as dots.
-function MonthCalendar({ year, month, today, onPrev, onNext, onDayClick, selectedDate, marks = {} }) {
-  const firstDayOfweek = new Date(year, month, 1).getDay();
+// One month as a grid (same props as before). Day buttons are 44px; today is yellow, the selected day is
+// ink with a pink shadow, days with events or tasks get a small square dot. Days from the months around
+// it are shown muted and can't be picked (the app loads one month at a time).
+function MonthCalendar({ year, month, today, onPrev, onNext, onDayClick, selectedDate, marks = {}, className = "" }) {
+  const firstWeekday = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const daysBefore = new Date(year, month, 0).getDate();
   const cells = [];
-  for (let i = 0; i < firstDayOfweek; i++) {
-    cells.push(null);
-  }
-  for (let d = 1; d <= daysInMonth; d++) {
-    cells.push(d);
-  }
-  const title = new Date(year, month, 1).toLocaleDateString([], { month: "long", year: "numeric" });
+  for (let i = firstWeekday - 1; i >= 0; i--) cells.push({ day: daysBefore - i, out: true });
+  for (let d = 1; d <= daysInMonth; d++) cells.push({ day: d, out: false });
+  while (cells.length % 7) cells.push({ day: cells.length - daysInMonth - firstWeekday + 1, out: true });
+  const title = new Date(year, month, 1).toLocaleDateString([], { month: "short", year: "numeric" }).toUpperCase();
+  const longTitle = new Date(year, month, 1).toLocaleDateString([], { month: "long", year: "numeric" });
 
   return (
-    <div className="month-calendar">
-      <div className="month-header">
-        <button onClick={onPrev} aria-label="Previous month">‹</button>
-        <h2>{title}</h2>
-        <button onClick={onNext} aria-label="Next month">›</button>
+    <Box className={`month ${className}`} aria-labelledby="month-title">
+      <div className="month-head">
+        <h2 id="month-title" aria-label={longTitle}>{title}</h2>
+        <button type="button" className="btn icon-btn surface" onClick={onPrev} aria-label="Previous month"><ChevronLeft /></button>
+        <button type="button" className="btn icon-btn surface" onClick={onNext} aria-label="Next month"><ChevronRight /></button>
       </div>
-      <div className="calendar-grid">
-        {weekdays.map((day) => (
-          <div key={day} className="weekday">{day}</div>
+      <div className="month-grid" role="group" aria-label={longTitle}>
+        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+          <span key={i} className="wd" aria-hidden="true">{d}</span>
         ))}
-        {cells.map((day, index) => {
-          const date = day ? dateString(year, month, day) : null;
-          let className = day ? "day-cell" : "day-cell empty";
-          if (date === today) className += " today";
-          if (date === selectedDate) className += " selected";
-
+        {cells.map((cell, i) => {
+          if (cell.out) {
+            return <span key={i} className="day-btn out" aria-hidden="true">{cell.day}</span>;
+          }
+          const date = dateString(year, month, cell.day);
+          const mark = marks[date];
+          const label = new Date(year, month, cell.day).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })
+            + (date === today ? ", today" : "")
+            + (mark ? `, ${mark.events} event${mark.events === 1 ? "" : "s"}, ${mark.tasks} task${mark.tasks === 1 ? "" : "s"}` : "");
           return (
-            <div key={index} className={className} onClick={() => day && onDayClick(date)}>
-              {day}
-              {date && marks[date] && (
-                <div className="day-marks">
-                  {marks[date].events > 0 && <span className="mark event" title={`${marks[date].events} event(s)`} />}
-                  {marks[date].tasks > 0 && <span className="mark task" title={`${marks[date].tasks} task(s)`} />}
-                </div>
-              )}
-            </div>
+            <button key={i} type="button" className={`day-btn ${date === today ? "today" : ""}`}
+              aria-pressed={date === selectedDate} aria-label={label} onClick={() => onDayClick(date)}>
+              {cell.day}
+              {mark && <span className="dot" aria-hidden="true" />}
+            </button>
           );
         })}
       </div>
-    </div>
+    </Box>
   );
 }
 

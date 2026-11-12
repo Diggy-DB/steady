@@ -1,0 +1,8 @@
+/* Settings. */
+
+.settings-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.settings-title .lede { margin-top: 8px; }
+.settings-title .tag svg { width: 14px; height: 14px; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(460px, 100%), 1fr)); gap: 26px; align-items: start; }
+.account-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-top: 3px solid var(--line); padding-top: 14px; }
+.settings { padding-bottom: 140px; }

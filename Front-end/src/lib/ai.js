@@ -20,7 +20,7 @@ async function call(path, { method = "POST", body, form } = {}) {
   try {
     response = await fetch(`${AI_URL}${path}`, options);
   } catch {
-    throw new Error("Can't reach the AI server. It may be off right now; try again later.");
+    throw new Error("Can't reach the AI server. It may be restarting or switched off; try again in a minute.");
   }
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {

@@ -1,37 +1,42 @@
 import { useCallback, useEffect, useState } from "react";
-import DayPopup from "./components/Daypopup";
-import MonthCalendar from "./components/MonthCalendar";
-import AIOverview from "./components/AIOverview";
-import ChatWidget from "./components/ChatWidget";
-import AuthForm from "./components/AuthForm";
-import MemoryPanel from "./components/MemoryPanel";
-import ProfilePanel, { profileIsEmpty } from "./components/ProfilePanel";
+import Login from "./pages/Login";
+import Signup from "./pages/Signup";
+import Home from "./pages/Home";
+import Settings from "./pages/Settings";
+import { Skeleton } from "./components/ui";
+import { profileIsEmpty } from "./lib/profile";
+import { applyOnboarding, takePending } from "./lib/onboarding";
+import { go, useRoute } from "./lib/route";
 import { ai } from "./lib/ai";
 import { supabase } from "./lib/supabase";
 import {
   addEvent,
   addTask,
-  dateString,
   deleteEvent,
   deleteJournal,
   deleteTask,
   loadMonth,
+  loadPendingSuggestions,
   loadProfile,
   saveJournal,
   updateTask,
 } from "./lib/data";
 
+// The app shell: who is signed in, which page (#/login, #/signup, #/, #/settings), and the data and handlers
+// the pages share. The handlers are the same as before the redesign; only the pages around them are new.
 function App() {
   const today = new Date();
+  const route = useRoute();
   const [session, setSession] = useState(undefined); // undefined = still checking
   const [shown, setShown] = useState({ year: today.getFullYear(), month: today.getMonth() });
   const [data, setData] = useState({ events: [], tasks: [], journals: [] });
   const [error, setError] = useState("");
-  const [selectedDate, setSelectedDate] = useState(null);
-  const [showMemories, setShowMemories] = useState(false);
   const [profile, setProfile] = useState(null);
-  const [chatRequest, setChatRequest] = useState(null); // a message for the chat to send, e.g. from the overview
-  const [showProfile, setShowProfile] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
+  const [overview, setOverview] = useState(null);
+  const [overviewBusy, setOverviewBusy] = useState("loading"); // "loading" | "refreshing" | ""
+  const [overviewError, setOverviewError] = useState("");
+  const [bannerDismissed, setBannerDismissed] = useState(false);
 
   // Keep track of who is signed in.
   useEffect(() => {
@@ -39,6 +44,12 @@ function App() {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => setSession(newSession));
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  // Signed in on the log-in or sign-up page: go home. Signed out anywhere else: go to log in.
+  useEffect(() => {
+    if (session && (route === "login" || route === "signup")) go("home");
+    if (session === null && route !== "login" && route !== "signup") go("login");
+  }, [session, route]);
 
   // Load the shown month's events, tasks and journal entries from Supabase.
   const reload = useCallback(async () => {
@@ -50,41 +61,72 @@ function App() {
     }
   }, [shown]);
 
+  const reloadSuggestions = useCallback(async () => {
+    try {
+      setSuggestions(await loadPendingSuggestions());
+    } catch {
+      // the suggestions card just stays as it was
+    }
+  }, []);
+
   useEffect(() => {
     if (session) reload();
   }, [session, reload]);
 
-  // The profile, once per sign-in. A new account is asked to fill it in (once; "Later" is remembered).
+  // The profile, once per sign-in. Answers from sign-up that waited for the email confirmation are saved first.
   const userId = session?.user?.id;
+  const userEmail = session?.user?.email;
   useEffect(() => {
     if (!userId) return;
-    loadProfile()
-      .then((p) => {
-        setProfile(p);
-        let later = false;
+    (async () => {
+      const pending = takePending(userEmail);
+      if (pending) {
         try {
-          later = localStorage.getItem(`steady.profileLater.${userId}`) === "1";
-        } catch {
-          // storage blocked: just ask again next time
+          await applyOnboarding(userId, pending);
+          reload();
+        } catch (err) {
+          setError(`Couldn't save your sign-up answers: ${err.message}`);
         }
-        if (profileIsEmpty(p) && !later) setShowProfile(true);
-      })
-      .catch((err) => setError(`Couldn't load your profile: ${err.message}`));
-  }, [userId]);
+      }
+      try {
+        setProfile(await loadProfile());
+      } catch (err) {
+        setError(`Couldn't load your profile: ${err.message}`);
+      }
+      try {
+        setBannerDismissed(localStorage.getItem(`steady.profileLater.${userId}`) === "1");
+      } catch {
+        // storage blocked: just show it again
+      }
+    })();
+    reloadSuggestions();
+  }, [userId, userEmail]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function closeProfile() {
-    setShowProfile(false);
+  // Today's overview of yesterday (written once a day by the AI service, then saved).
+  const loadOverview = useCallback(async (refresh = false) => {
+    setOverviewBusy(refresh ? "refreshing" : "loading");
+    setOverviewError("");
+    try {
+      setOverview(refresh ? await ai.refreshOverview() : await ai.overview());
+    } catch (err) {
+      setOverviewError(err.message);
+    } finally {
+      setOverviewBusy("");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (userId) loadOverview();
+  }, [userId, loadOverview]);
+
+  function dismissBanner() {
+    setBannerDismissed(true);
     try {
       localStorage.setItem(`steady.profileLater.${userId}`, "1");
     } catch {
       // storage blocked: fine
     }
   }
-
-  // How many events and tasks each day has, for the dots on the month grid.
-  const marks = {};
-  for (const e of data.events) (marks[e.start_date] ??= { events: 0, tasks: 0 }).events += 1;
-  for (const t of data.tasks) (marks[t.date] ??= { events: 0, tasks: 0 }).tasks += 1;
 
   async function handleAddEvent(newEvent) {
     try {
@@ -158,75 +200,59 @@ function App() {
       const first = new Date(year, month + step, 1);
       return { year: first.getFullYear(), month: first.getMonth() };
     });
-    setSelectedDate(null);
   }
 
-  if (session === undefined) return <p>Loading…</p>;
-  if (!session) {
+  // Still checking who is signed in: page-shaped placeholders, no spinner.
+  if (session === undefined) {
     return (
-      <div>
-        <h1>Steady Planner</h1>
-        <AuthForm />
+      <div className="home" aria-busy="true">
+        <Skeleton height={64} />
+        <div className="top-row">
+          <Skeleton height={320} className="hero" />
+          <Skeleton height={320} className="month" />
+        </div>
       </div>
+    );
+  }
+  if (!session) return route === "signup" ? <Signup /> : <Login />;
+
+  if (route === "settings") {
+    return profile ? (
+      <Settings profile={profile} email={session.user.email} onSaved={setProfile} onCalendarChanged={reload} />
+    ) : (
+      <div className="page" aria-busy="true"><Skeleton height={64} /><Skeleton height={400} /></div>
     );
   }
 
   return (
-    <div>
-      <div className="app-header">
-        <h1>Steady Planner</h1>
-        <div>
-          <button className="link" onClick={() => setShowProfile(true)} disabled={!profile}>
-            {profile?.first_name ? `${profile.first_name}'s profile` : "Profile"}
-          </button>
-          {" · "}
-          <button className="link" onClick={() => setShowMemories(true)}>What Steady remembers</button>
-          {" · "}
-          <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
-        </div>
-      </div>
-      {error && <p className="error">{error}</p>}
-      <AIOverview onAsk={(text) => setChatRequest({ id: Date.now(), text })} />
-      <MonthCalendar
-        year={shown.year}
-        month={shown.month}
-        today={dateString(today.getFullYear(), today.getMonth(), today.getDate())}
-        onPrev={() => changeMonth(-1)}
-        onNext={() => changeMonth(1)}
-        onDayClick={setSelectedDate}
-        selectedDate={selectedDate}
-        marks={marks}
-      />
-      {selectedDate && (
-        <DayPopup
-          date={selectedDate}
-          events={data.events}
-          tasks={data.tasks}
-          journals={data.journals}
-          onDeleteEvent={handleDeleteEvent}
-          onAddEvent={handleAddEvent}
-          onAddTask={handleAddTask}
-          onUpdateTask={handleUpdateTask}
-          onDeleteTask={handleDeleteTask}
-          onSaveJournal={handleSaveJournal}
-          onDeleteJournal={handleDeleteJournal}
-          onClose={() => setSelectedDate(null)}
-        />
-      )}
-      {showMemories && <MemoryPanel onClose={() => setShowMemories(false)} />}
-      {showProfile && profile && (
-        <ProfilePanel
-          profile={profile}
-          firstTime={profileIsEmpty(profile)}
-          onSaved={(saved) => {
-            setProfile(saved);
-            setShowProfile(false);
-          }}
-          onClose={closeProfile}
-        />
-      )}
-      <ChatWidget events={data.events} onCalendarChanged={reload} request={chatRequest} />
-    </div>
+    <Home
+      profile={profile}
+      data={data}
+      error={error}
+      shown={shown}
+      onChangeMonth={changeMonth}
+      suggestions={suggestions}
+      onSuggestionsChanged={reloadSuggestions}
+      reload={() => {
+        reload();
+        reloadSuggestions();
+      }}
+      overview={overview}
+      overviewBusy={overviewBusy}
+      overviewError={overviewError}
+      onRefreshOverview={() => loadOverview(true)}
+      profileBanner={profile && profileIsEmpty(profile) && !bannerDismissed}
+      onDismissBanner={dismissBanner}
+      handlers={{
+        onAddEvent: handleAddEvent,
+        onDeleteEvent: handleDeleteEvent,
+        onAddTask: handleAddTask,
+        onUpdateTask: handleUpdateTask,
+        onDeleteTask: handleDeleteTask,
+        onSaveJournal: handleSaveJournal,
+        onDeleteJournal: handleDeleteJournal,
+      }}
+    />
   );
 }
 

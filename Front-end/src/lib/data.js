@@ -79,3 +79,26 @@ export async function saveJournal(date, information, journalId) {
 export async function deleteJournal(journalId) {
   check(await supabase.from("journals").delete().eq("journal_id", journalId));
 }
+
+// ---- Added for the redesign (reads only; the queries above are unchanged) ----
+
+// The AI's suggestions still waiting for an answer, for the Home suggestions card. Read straight from
+// Supabase (Row Level Security keeps them private), so the card shows even when the AI server is off;
+// Accept and Decline still go through the AI service, which checks them again first.
+export async function loadPendingSuggestions() {
+  const rows = check(
+    await supabase.from("ai_suggestions").select("*").eq("status", "PENDING").order("created_at", { ascending: true }),
+  );
+  const now = Date.now();
+  return rows
+    .filter((s) => !s.expires_at || new Date(s.expires_at).getTime() > now) // too late to be useful
+    .map((s) => ({ ...s, suggestion_id: String(s.suggestion_id), target_id: s.target_id == null ? null : String(s.target_id) }));
+}
+
+// Fixed weekly commitments (classes, shifts): repeating events the AI may not move, for Settings.
+export async function loadCommitments() {
+  return check(
+    await supabase.from("calendar_events").select("*").eq("changeable", false).not("recurrence_rule", "is", null)
+      .order("start_time"),
+  );
+}
