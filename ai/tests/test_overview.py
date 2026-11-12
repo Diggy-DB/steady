@@ -137,3 +137,12 @@ def test_the_overview_endpoint(monkeypatch):
     first = api.get("/overview").json()
     assert first["headline"] == "A solid Monday." and api.get("/overview").json() == first
     assert api.post("/overview/refresh").json()["headline"] == "Again."
+
+
+def test_the_home_page_tiles_come_from_the_counted_facts(ctx):
+    ctx.store.data["tasks"][0]["due"] = "2026-10-05"  # MTH 133 problem set, due yesterday, not started
+    result = overview.daily_overview(ctx, FakeClient([reply(json.dumps(GOOD))]), "fake")
+    assert result["tiles"]["went_well"] == ["Finished Buy groceries", "Wrote in your journal (2-day streak)"]
+    assert result["tiles"]["missed"] == ["MTH 133 problem set"]
+    assert result["tiles"]["focus"] == "Start the MTH 133 problem set today." and result["tiles"]["focus_ask"]
+    assert result["tasks_yesterday"] == {"done": 1, "due": 2}

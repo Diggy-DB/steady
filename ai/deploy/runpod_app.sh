@@ -64,6 +64,7 @@ echo "Installing the API's packages..."
 model_up() {  # true only when vLLM itself answers with our model (not some other server on the port)
   curl -sf "http://127.0.0.1:$MODEL_PORT/v1/models" | grep -q "\"$MODEL\""
 }
+pkill -f "steady-api-loop" 2> /dev/null || true  # the API's restart loop (below), then the API itself
 pkill -f "uvicorn ai.server:app" 2> /dev/null || true
 if pgrep -f "vllm serve.*--port $MODEL_PORT" > /dev/null && [ "${RESTART_MODEL:-0}" != 1 ]; then
   echo "The model server is already running (or still loading); leaving it alone."
@@ -77,13 +78,14 @@ else
   # for them, which didn't fit next to the image reader on a 24 GB card).
   echo "Starting the model (the first time it downloads about 9 GB; then 1-2 minutes)..."
   # vLLM's own tools (ninja, nvcc) must be on PATH: it builds some GPU kernels the first time it starts.
-  PATH="$VENV/bin:$PATH" nohup "$VENV/bin/vllm" serve "$MODEL" \
+  # setsid: its own session, so closing the Jupyter terminal can't take it down.
+  PATH="$VENV/bin:$PATH" setsid nohup "$VENV/bin/vllm" serve "$MODEL" \
     --host 127.0.0.1 --port "$MODEL_PORT" \
     --max-model-len 32768 --gpu-memory-utilization 0.92 --max-num-seqs 16 --max-num-batched-tokens 8192 \
     --enable-auto-tool-choice --tool-call-parser qwen3_coder \
     --reasoning-parser qwen3 \
     --limit-mm-per-prompt '{"image": 12, "video": 0}' \
-    > /workspace/logs/vllm.log 2>&1 &
+    > /workspace/logs/vllm.log 2>&1 < /dev/null &
 fi
 
 for i in $(seq 1 360); do  # up to 30 minutes (a slow pod downloads the model slowly)
@@ -102,7 +104,12 @@ model_up || { echo "The model isn't up after 30 minutes. It keeps loading in the
 echo "Model ready."
 
 cd "$AI"
-nohup uv run --frozen uvicorn ai.server:app --host 0.0.0.0 --port 8000 > /workspace/logs/app.log 2>&1 &
+# The API runs in a loop: if it ever stops, it's back 3 seconds later (the website said "Can't reach the AI
+# server" until someone restarted it by hand). Its own session, so closing the terminal doesn't stop it.
+echo "=== API started $(date) ===" >> /workspace/logs/app.log
+setsid nohup bash -c 'while true; do uv run --frozen uvicorn ai.server:app --host 0.0.0.0 --port 8000; \
+  echo "[steady-api-loop] the API stopped at $(date); restarting in 3 s"; sleep 3; done' \
+  >> /workspace/logs/app.log 2>&1 < /dev/null &
 for _ in $(seq 1 30); do
   if curl -sf http://127.0.0.1:8000/health > /dev/null; then break; fi
   sleep 2

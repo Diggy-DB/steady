@@ -258,3 +258,13 @@ def test_an_accepted_journal_edit_replaces_the_text(fake):
     propose_journal_entry(ToolContext(s, "user-1", NOW), "2026-10-04", "Quiet, restful Sunday.", replace=True)
     s.apply(s.suggestions("user-1")[0])
     assert fake.tables["journals"][0]["information"] == "Quiet, restful Sunday."
+
+
+def test_claiming_a_suggestion_works_once(fake):
+    s = store(fake)
+    propose_new_event(ToolContext(s, "user-1", NOW), "Gym", "2026-10-07 12:30", "2026-10-07 13:30", "")
+    sid = s.suggestions("user-1")[0]["suggestion_id"]
+    assert s.claim(sid, "PENDING", "ACCEPTED") is True
+    assert s.claim(sid, "PENDING", "ACCEPTED") is False  # the second request finds it already ACCEPTED
+    patch = [r for r in fake.requests if r.method == "PATCH"][-1]
+    assert ("status", "eq.PENDING") in patch.url.params.multi_items()

@@ -20,7 +20,8 @@ def context() -> ToolContext:
     return ToolContext(store=FixtureStore(), user_id="user-1", now=NOW)
 
 
-def reply(content: str = "", tool_calls: list[tuple[str, dict | str]] = (), reasoning: str = "") -> ChatCompletion:
+def reply(content: str = "", tool_calls: list[tuple[str, dict | str]] = (), reasoning: str = "",
+          finish_reason: str | None = None) -> ChatCompletion:
     """Build a response exactly like the OpenAI library would return it."""
     message = {"role": "assistant", "content": content}
     if reasoning:
@@ -40,7 +41,8 @@ def reply(content: str = "", tool_calls: list[tuple[str, dict | str]] = (), reas
             "object": "chat.completion",
             "created": 0,
             "model": "fake",
-            "choices": [{"index": 0, "message": message, "finish_reason": "tool_calls" if tool_calls else "stop"}],
+            "choices": [{"index": 0, "message": message,
+                         "finish_reason": finish_reason or ("tool_calls" if tool_calls else "stop")}],
         }
     )
 
@@ -192,3 +194,85 @@ def test_a_repeated_failing_call_is_refused(logged):
     first, second = [m["content"] for m in result["messages"] if m["role"] == "tool"]
     assert "e.g. start_date 2027-01-11 and end_date 2027-01-24" in first  # the error says what to ask instead
     assert second.startswith("Error: you already made exactly this call")
+
+
+# ---- Replies the user can read: no thinking, short, no "I've added" ----
+
+THINKING_DUMP = "Thinking Process:\n1. The user wants a routine for tonight. " + "Let me consider the schedule again. " * 200
+
+
+def test_thinking_that_runs_out_of_tokens_is_redone_without_thinking(logged):
+    client = FakeClient([reply(THINKING_DUMP, finish_reason="length"), reply("Try 25 minutes of work, then a 5-minute break.")])
+    result = run_agent(client, "fake", context(), "I keep procrastinating. Give me a simple routine for tonight.", verbose=False)
+    assert result["answer"] == "Try 25 minutes of work, then a 5-minute break."
+    assert client.requests[1]["extra_body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert [r["attempt"] for r in logged] == ["thinking", "no thinking"]
+
+
+def test_an_answer_that_reads_like_thinking_is_rewritten_short(logged):
+    client = FakeClient([reply(THINKING_DUMP), reply("Start with your easiest task for 25 minutes, then take a break.")])
+    result = run_agent(client, "fake", context(), "I keep procrastinating.", verbose=False)
+    assert result["answer"] == "Start with your easiest task for 25 minutes, then take a break."
+    assert "Draft reply" in client.requests[1]["messages"][1]["content"]
+
+
+def test_if_the_rewrite_fails_the_answer_is_cut_at_a_sentence(logged):
+    long = "You have a lecture at 10 AM. " * 60
+    client = FakeClient([reply(long), reply("")])
+    answer = run_agent(client, "fake", context(), "What's on today?", verbose=False)["answer"]
+    assert len(answer) <= 600 and answer.endswith(".")
+
+
+def test_short_answers_are_left_alone(logged):
+    client = FakeClient([reply("You work 1-5 PM tomorrow.")])
+    assert run_agent(client, "fake", context(), "Tomorrow?", verbose=False)["answer"] == "You work 1-5 PM tomorrow."
+    assert len(client.requests) == 1
+
+
+def test_claims_become_suggestions_when_it_only_suggested(logged):
+    gym = {"name": "Gym", "start": "2026-10-07 12:30", "end": "2026-10-07 13:30", "reason": "Free."}
+    client = FakeClient([reply(tool_calls=[("propose_new_event", gym)]), reply("I've added a gym session on Wednesday at 12:30.")])
+    answer = run_agent(client, "fake", context(), "Find time for the gym.", verbose=False)["answer"]
+    assert answer == "I suggest adding a gym session on Wednesday at 12:30."
+
+
+def test_the_prompt_spells_out_this_week_and_next_week():
+    from ai.agent import calendar_text
+
+    wednesday = datetime(2026, 11, 11, 15, 0, tzinfo=ZoneInfo("America/Detroit"))
+    text = calendar_text(wednesday)
+    assert "This week: Monday 2026-11-09 to Sunday 2026-11-15. Next week: Monday 2026-11-16 to Sunday 2026-11-22." in text
+    assert "Thu 2026-11-12" in text and "Wed 2026-11-25" in text
+    sunday = calendar_text(datetime(2026, 11, 15, 9, 0, tzinfo=ZoneInfo("America/Detroit")))
+    assert "Next week: Monday 2026-11-16" in sunday  # on a Sunday, next week starts tomorrow
+
+
+def test_running_out_of_rounds_still_lists_the_suggestions_made(logged, monkeypatch):
+    import ai.agent
+
+    monkeypatch.setattr(ai.agent, "MAX_ROUNDS", 2)
+    gym = {"name": "Gym", "start": "2026-10-07 12:30", "end": "2026-10-07 13:30", "reason": "Free."}
+    client = FakeClient([reply(tool_calls=[("propose_new_event", gym)]), reply(tool_calls=[("get_schedule", TUESDAY)])])
+    result = run_agent(client, "fake", context(), "Plan my gym sessions.", verbose=False)
+    assert result["gave_up"] is True
+    assert result["answer"] == ("Here's what I suggest:\n- new event 'Gym' on Wednesday, October 7, 12:30 PM – 1:30 PM\n"
+                                "Nothing changes until you accept.")
+
+
+@pytest.mark.parametrize("asked,extra", [
+    ("Plan my week.", []),
+    ("Can you add a task for reading my novel?", ["propose_new_task"]),
+    ("Cancel movie night.", ["propose_delete"]),
+    ("Add to my journal: good day.", ["get_journal", "propose_journal_entry"]),
+    ("Should I delete your gym session?\nyes", ["propose_delete"]),  # Steady asked; "yes" answers it
+])
+def test_only_the_tools_a_request_needs_are_offered(asked, extra):
+    from ai.agent import CORE_TOOLS, offered_tools
+
+    assert [t["function"]["name"] for t in offered_tools(asked)] == [*CORE_TOOLS, *extra]
+
+
+def test_the_model_sees_only_those_tools(logged):
+    client = FakeClient([reply("Sure.")])
+    run_agent(client, "fake", context(), "Plan my week.", verbose=False)
+    assert len(client.requests[0]["tools"]) == 4

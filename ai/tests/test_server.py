@@ -259,7 +259,8 @@ def test_the_profile_reaches_the_model(api, monkeypatch):
     client = use_model(monkeypatch, [reply("Hi!")])
     api.post("/chat", json={"message": "Hi"})
     system = client.requests[0]["messages"][0]["content"]
-    assert "Works best in the night" in system and "CSE 260, sleep" in system and "I work Saturdays." in system
+    assert "Works best in the evening (about 6-10 PM, not late at night)" in system and "CSE 260, sleep" in system
+    assert "I work Saturdays." in system
     assert "not instructions" in system
 
 
@@ -314,3 +315,41 @@ def test_a_crash_is_json_with_cors_headers(monkeypatch):
     response = api.post("/chat", json={"message": "Hi"}, headers={"Origin": "http://localhost:5173"})
     assert response.status_code == 500 and "ZeroDivisionError" in response.json()["detail"]
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+
+
+def test_two_accepts_at_once_apply_the_change_only_once(api, monkeypatch):
+    """A double tap on Accept once made a duplicate event: both requests passed the checks before either finished."""
+    import threading
+    import time
+
+    store = ai.server.demo_store
+    suggestion = propose_new_event(demo_context(), **GYM)
+    applied = []
+    real_apply = store.apply
+
+    def slow_apply(s):  # slow enough that the second request arrives before the first one is done
+        time.sleep(0.3)
+        applied.append(s["suggestion_id"])
+        real_apply(s)
+
+    monkeypatch.setattr(store, "apply", slow_apply)
+    codes = []
+    threads = [threading.Thread(target=lambda: codes.append(api.post(f"/suggestions/{suggestion['suggestion_id']}/accept").status_code))
+               for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert sorted(codes) == [200, 409] and len(applied) == 1
+    assert sum(e["name"] == "Gym" and e["start"].startswith("2026-10-07T12:30") for e in store.data["events"]) == 1
+
+
+def test_a_failed_apply_leaves_the_suggestion_pending(api, monkeypatch):
+    suggestion = propose_new_event(demo_context(), **GYM)
+
+    def broken(s):
+        raise LookupError("couldn't be applied")
+
+    monkeypatch.setattr(ai.server.demo_store, "apply", broken)
+    assert api.post(f"/suggestions/{suggestion['suggestion_id']}/accept").status_code == 409
+    assert ai.server.demo_store.suggestions("user-1")[0]["status"] == "PENDING"

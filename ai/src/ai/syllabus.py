@@ -321,6 +321,54 @@ class Checked:
     notes: list[str]  # what code changed
 
 
+FULL_DAYS = {"monday": "Mon", "tuesday": "Tue", "wednesday": "Wed", "thursday": "Thu", "friday": "Fri",
+             "saturday": "Sat", "sunday": "Sun"}
+SHORT_DAYS = {"Mon": "Mon", "Tue": "Tue", "Tues": "Tue", "Wed": "Wed", "Thu": "Thu", "Thur": "Thu", "Thurs": "Thu",
+              "Fri": "Fri", "Sat": "Sat", "Sun": "Sun"}
+DAY_WORD = (r"(?:(?i:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|"
+            r"Mon|Tues|Tue|Wed|Thurs|Thur|Thu|Fri|Sat|Sun)")
+DAY_RANGE = re.compile(rf"\b({DAY_WORD})s?\.?\s*(?:through|thru|to|-|–)\s*({DAY_WORD})s?\b")
+DAY_NAMED = re.compile(rf"\b({DAY_WORD})s?\b")
+# Letter codes: MWF, TTh, TR, MTWRF, TuTh, M/W/F ("T" is Tuesday; "Th" and "R" are Thursday)
+DAY_CODES = re.compile(r"\b(?:Tu|Th|Sa|Su|M|T|W|R|F)(?:[ /,&-]{0,2}(?:Tu|Th|Sa|Su|M|T|W|R|F))*\b")
+CODE_LETTERS = {"M": "Mon", "T": "Tue", "Tu": "Tue", "W": "Wed", "Th": "Thu", "R": "Thu", "F": "Fri", "Sa": "Sat", "Su": "Sun"}
+# A line's parts: "Lecture MWF 10:20-11:10 AM; recitation Thursday 10:20-11:10 AM" is two meetings.
+SEGMENTS = re.compile(r"[;|]|(?<=[^.\s][^.\s])\.\s+(?=[A-Z])|\s{3,}")
+
+
+def day_name(word: str) -> str:
+    return FULL_DAYS.get(word.lower()) or SHORT_DAYS[word]
+
+
+def days_in(segment: str) -> set[str]:
+    """The weekdays a piece of syllabus text names: 'Monday through Thursday', 'Tues & Thurs', 'MWF', 'M/W/F'."""
+    found = set()
+    for a, b in DAY_RANGE.findall(segment):
+        first, last = DAYS.index(day_name(a)), DAYS.index(day_name(b))
+        found |= set(DAYS[first:last + 1]) if first <= last else set()
+    found |= {day_name(w) for w in DAY_NAMED.findall(segment)}
+    for code in DAY_CODES.findall(segment):
+        letters = re.findall(r"Tu|Th|Sa|Su|M|T|W|R|F", code)
+        if len(letters) == 2 and re.fullmatch(r"\w\s*[-–]\s*\w", code):  # "M-F": a range, not two days
+            found |= set(DAYS[DAYS.index(CODE_LETTERS[letters[0]]):DAYS.index(CODE_LETTERS[letters[1]]) + 1])
+        elif len(letters) >= 2 or code in ("Th", "Tu"):  # a lone "M" or "F" is too likely to be something else
+            found |= {CODE_LETTERS[x] for x in letters}
+    return found
+
+
+def days_from_text(text: str, kind: str, start: str) -> list[str] | None:
+    """The days the syllabus text gives for a meeting that starts at `start` ("13:00"), or None if it doesn't say
+    clearly: the days named in the same part of a line as the start time; if parts disagree, the one naming `kind`."""
+    hour, minute = int(start[:2]), start[3:]
+    at = re.compile(rf"(?<![\d:])(?:{hour}|{hour % 12 or 12}|{hour:02d}):{minute}(?!\d)")
+    named = [(part, days) for line in text.splitlines() for part in SEGMENTS.split(line)
+             if at.search(part) and (days := days_in(part))]
+    choices = {frozenset(days) for _, days in named}
+    if len(choices) > 1:
+        choices = {frozenset(days) for part, days in named if kind.lower() in part.lower()}
+    return [d for d in DAYS if d in next(iter(choices))] if len(choices) == 1 else None
+
+
 def check(data: dict, now: datetime, text: str | None) -> Checked:
     tz = now.tzinfo
     window = semester_window(data, text)
@@ -354,7 +402,14 @@ def check(data: dict, now: datetime, text: str | None) -> Checked:
             continue
         if end <= start and int(end[:2]) < 12:  # "12:40 - 2:00" without PM
             end = f"{int(end[:2]) + 12:02d}{end[2:]}"
-        raw_meetings.append({"kind": str(m.get("kind") or "class"), "days": days, "start": start, "end": end})
+        kind = str(m.get("kind") or "class")
+        # The model has read "Monday, Wednesday, and Friday" as every weekday: the text, where there is one, decides.
+        written = days_from_text(text, kind, start) if text else None
+        if written and written != days:
+            notes.append(f"{course} {kind}: days corrected to {'/'.join(written)} from the syllabus text "
+                         f"(read as {'/'.join(days)})")
+            days = written
+        raw_meetings.append({"kind": kind, "days": days, "start": start, "end": end})
 
     first_day, last_day = fix_year(data.get("term_start")), fix_year(data.get("term_end"))
     breaks = []
@@ -365,6 +420,9 @@ def check(data: dict, now: datetime, text: str | None) -> Checked:
     for m in raw_meetings:
         if not (first_day and last_day and first_day < last_day):
             dropped.append(f"{course} {m['kind']}: the semester's first and last day weren't found")
+            continue
+        if last_day < now.date():  # an old syllabus (one from 2024 was imported): no classes left to add
+            dropped.append(f"{course} {m['kind']}: the semester ended on {last_day:%B} {last_day.day}, {last_day.year}")
             continue
         skip = [first_day + timedelta(days=k) for k in range((last_day - first_day).days + 1)]
         skip = [d.isoformat() for d in skip if any(a <= d <= b for a, b in breaks) and DAYS[d.weekday()] in m["days"]]

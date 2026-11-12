@@ -125,7 +125,7 @@ def not_applied(request: Request, error: LookupError) -> JSONResponse:
 
 class ChatTurn(BaseModel):
     role: Literal["user", "assistant"]  # never "system": callers can't add instructions
-    content: str = Field(max_length=4000)
+    content: str = Field(max_length=50000)  # long ones are cut (see answer), not refused: one long reply mustn't break the chat
 
 
 class ChatRequest(BaseModel):
@@ -183,10 +183,13 @@ def health() -> dict:
     return {"ok": True, "store": STORE, "model": settings.model, "memory": memory is not None}
 
 
+HISTORY_CHARS = 1500  # of each earlier turn sent back to the model
+
+
 def answer(request: ChatRequest, ctx: ToolContext) -> ChatResponse:
     """Run the agent on one message; the reply and the suggestions it made."""
     before = {s["suggestion_id"] for s in ctx.store.suggestions(ctx.user_id)}
-    history = [turn.model_dump() for turn in request.history]
+    history = [{"role": t.role, "content": t.content[:HISTORY_CHARS]} for t in request.history]
     memories = recall(ctx.user_id, request.message)
     result = run_agent(llm, settings.model, ctx, request.message, verbose=False, history=history, memories=memories,
                        profile=ctx.store.user(ctx.user_id))
@@ -453,8 +456,15 @@ def accept(suggestion_id: str, ctx: ToolContext = Depends(context)) -> dict:
         raise HTTPException(409, f"accept {', '.join(checked['accept_first'])} first")
     if not checked["valid"]:
         raise HTTPException(409, "; ".join(checked["problems"]))
-    ctx.store.apply(suggestion)
-    ctx.store.set_status(suggestion_id, "ACCEPTED")
+    # Claim it first: of two Accepts at once (a double tap, or "Accept all" plus a card's own button),
+    # only one gets PENDING -> ACCEPTED, so the change is never applied twice (it once made a duplicate event).
+    if not ctx.store.claim(suggestion_id, "PENDING", "ACCEPTED"):
+        raise HTTPException(409, "it was already answered")
+    try:
+        ctx.store.apply(suggestion)
+    except Exception:
+        ctx.store.claim(suggestion_id, "ACCEPTED", "PENDING")  # it didn't happen, so it can be tried again
+        raise
     ctx.store.log(ctx.user_id, "SUGGESTION_ACCEPTED", "ai_suggestion", suggestion_id, "USER",
                   {"type": suggestion["type"], "target_id": suggestion["target_id"], "change": suggestion["proposed_change"]})
     return {"suggestion_id": suggestion_id, "status": "ACCEPTED"}
@@ -463,9 +473,8 @@ def accept(suggestion_id: str, ctx: ToolContext = Depends(context)) -> dict:
 @app.post("/suggestions/{suggestion_id}/decline")
 def decline(suggestion_id: str, ctx: ToolContext = Depends(context)) -> dict:
     suggestion = find_suggestion(ctx, suggestion_id)
-    if suggestion["status"] != "PENDING":
-        raise HTTPException(409, f"it is already {suggestion['status']}")
-    ctx.store.set_status(suggestion_id, "DECLINED")
+    if suggestion["status"] != "PENDING" or not ctx.store.claim(suggestion_id, "PENDING", "DECLINED"):
+        raise HTTPException(409, "it was already answered")
     ctx.store.log(ctx.user_id, "SUGGESTION_DECLINED", "ai_suggestion", suggestion_id, "USER", {"type": suggestion["type"]})
     return {"suggestion_id": suggestion_id, "status": "DECLINED"}
 

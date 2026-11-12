@@ -4,29 +4,38 @@ import json
 import re
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import openai
 
-from ai.llm import EXTRA_SAMPLING, LOG_FILE, SAMPLING, log_call, split_reasoning
+from ai.llm import EXTRA_SAMPLING, LOG_FILE, SAMPLING, log_call, split_reasoning, thinking_off
 from ai.planning import (
+    DELETE_WORDS,
     FIND_FREE_SLOTS_TOOL,
+    JOURNAL_WORDS,
+    TASK_WORDS,
     GET_JOURNAL_TOOL,
     PROPOSE_DELETE_TOOL,
     PROPOSE_JOURNAL_ENTRY_TOOL,
     PROPOSE_MOVE_EVENT_TOOL,
     PROPOSE_NEW_EVENT_TOOL,
+    PROPOSE_NEW_TASK_TOOL,
     find_free_slots,
     get_journal,
     propose_delete,
     propose_journal_entry,
     propose_move_event,
     propose_new_event,
+    propose_new_task,
 )
 from ai.schedule import GET_SCHEDULE_TOOL, ToolContext, ToolError, describe_now, get_schedule
 
 MAX_ROUNDS = 8  # a plan can need several rounds: look up, find time, then one or more proposals
+# Tokens per round. Thinking that runs this long has lost its way (it once filled 8,192 and the server sent
+# the whole thinking as the reply), so the round is redone without thinking (see run_agent).
+ROUND_TOKENS = 4096
+LONG_ANSWER = 1000  # characters: a longer answer is rewritten short (the prompt asks for 5 short sentences)
 
 # Every tool the model may call: its name -> (definition the model sees, function your code runs).
 TOOLS = {
@@ -34,13 +43,35 @@ TOOLS = {
     "find_free_slots": (FIND_FREE_SLOTS_TOOL, find_free_slots),
     "propose_new_event": (PROPOSE_NEW_EVENT_TOOL, propose_new_event),
     "propose_move_event": (PROPOSE_MOVE_EVENT_TOOL, propose_move_event),
+    "propose_new_task": (PROPOSE_NEW_TASK_TOOL, propose_new_task),
     "propose_delete": (PROPOSE_DELETE_TOOL, propose_delete),
     "get_journal": (GET_JOURNAL_TOOL, get_journal),
     "propose_journal_entry": (PROPOSE_JOURNAL_ENTRY_TOOL, propose_journal_entry),
 }
 
+# Tools every request gets; the others only when the request is about them (see offered_tools).
+CORE_TOOLS = ("get_schedule", "find_free_slots", "propose_new_event", "propose_move_event")
+TOOLS_BY_TOPIC = (
+    (TASK_WORDS, ("propose_new_task",)),
+    (DELETE_WORDS, ("propose_delete",)),
+    (JOURNAL_WORDS, ("get_journal", "propose_journal_entry")),
+)
+
+
+def offered_tools(asked: str) -> list[dict]:
+    """The tool definitions to send for this request.
+
+    Offered all 8 tools, the 4B reached for the task tool 21 times in 17 planning runs (each refused, each
+    a wasted round). A tool it can't see can't distract it, and the prompt stays short: the task, delete and
+    journal tools come only when the user's message (or Steady's last reply, for "yes, do it") is about them.
+    """
+    names = list(CORE_TOOLS) + [n for words, tools in TOOLS_BY_TOPIC if words.search(asked) for n in tools]
+    return [TOOLS[n][0] for n in names]
+
+
 SYSTEM_PROMPT = """You are Steady, a planning assistant for a student.
 Current date and time: {now}.
+{calendar}
 
 Rules:
 - Before answering anything about the user's schedule, look it up with get_schedule. Never guess.
@@ -51,7 +82,9 @@ Rules:
   suggest a move instead. Only use propose_journal_entry when the user asks you to add to or change
   their journal; to change an entry, read it with get_journal first.
 - When you recommend a time for something, create it with propose_new_event or propose_move_event
-  so the user can accept it. Don't only describe it.
+  so the user can accept it. Don't only describe it. To add to the user's task list (a to-do due on a
+  day, not a block of time), use propose_new_task.
+- Suggest times between 7 AM and 11 PM unless the user asks for a late or early time.
 - If there isn't enough free time, consider moving an event marked changeable: true, or splitting
   the work into smaller blocks.
 - Count what is already on the calendar toward the user's goals (for example, an existing study
@@ -131,6 +164,66 @@ def call_key(name: str, arguments_json: str) -> tuple:
         return name, arguments_json
 
 
+# How thinking reads when it ends up in the answer: "Thinking Process:", "Okay, the user wants...", "Let me check".
+THINKING_START = re.compile(r"^\s*(?:\**thinking process|okay[,.]|ok[,.]|alright[,.]|let me\b|let's\b|the user\b|"
+                            r"i need to\b|first,|hmm\b|wait[,.])", re.IGNORECASE)
+
+SHORTEN = (
+    "Rewrite the draft below as the planning assistant's final reply to the student: at most 4 short sentences "
+    "or bullet points, plain text. Keep every day, time and name exactly as in the draft, and keep \"I suggest\" "
+    "wording (nothing changes until the student accepts). Leave out any reasoning or thinking out loud, and add "
+    "nothing new."
+)
+
+
+def needs_shortening(answer: str) -> bool:
+    return len(answer) > LONG_ANSWER or bool(THINKING_START.match(answer)) or "<tool_call>" in answer or "</think>" in answer
+
+
+def shorten(client: openai.OpenAI, model: str, question: str, answer: str) -> str:
+    """The answer in a few short sentences, written by the model without thinking (thinking out loud and long
+    replies are hard to read in a chat bubble). If that fails, the start of the answer, cut at a sentence."""
+    try:
+        response = client.chat.completions.create(
+            model=model, temperature=0.3, top_p=0.8, max_tokens=400,
+            messages=[{"role": "system", "content": SHORTEN},
+                      {"role": "user", "content": f"The student asked: {question}\n\nDraft reply:\n{answer[:6000]}"}],
+            extra_body={**EXTRA_SAMPLING, **thinking_off(str(client.base_url))})
+        short = split_reasoning(response.choices[0].message.model_dump())[1].strip()
+        if short and len(short) < len(answer) and not THINKING_START.match(short):
+            return short
+    except openai.APIError:
+        pass
+    cut = answer[:600]
+    return cut[: cut.rfind(". ") + 1] if ". " in cut else cut
+
+
+# "I've added X" when it only suggested X (the prompt says not to; the 4B still does): reworded in code.
+CLAIMS = re.compile(r"\bI(?:'ve| have)? (added|scheduled|booked|created|moved|rescheduled|deleted|removed|cancell?ed|put)\b",
+                    re.IGNORECASE)
+SUGGEST_VERB = {"added": "adding", "scheduled": "scheduling", "booked": "booking", "created": "creating",
+                "moved": "moving", "rescheduled": "rescheduling", "deleted": "deleting", "removed": "removing",
+                "cancelled": "cancelling", "canceled": "canceling", "put": "putting"}
+
+
+def soften_claims(answer: str) -> str:
+    return CLAIMS.sub(lambda m: f"I suggest {SUGGEST_VERB[m.group(1).lower()]}", answer)
+
+
+def calendar_text(now: datetime) -> str:
+    """Which dates "this week", "next week" and the coming days are, worked out in code.
+
+    A small model miscounts dates: asked for next week's tasks, it looked up the week after. So the
+    prompt spells them out (weeks start on Monday) instead of leaving the arithmetic to the model.
+    """
+    today = now.date()
+    monday = today - timedelta(days=today.weekday())
+    week = lambda first: f"Monday {first.isoformat()} to Sunday {(first + timedelta(days=6)).isoformat()}"  # noqa: E731
+    days = ", ".join(f"{d:%a} {d.isoformat()}" for d in (today + timedelta(days=k) for k in range(1, 15)))
+    return (f"Today is {today:%A} {today.isoformat()}. This week: {week(monday)}. Next week: "
+            f"{week(monday + timedelta(days=7))}.\nThe next 14 days: {days}.")
+
+
 def memory_section(memories: list[str] | None) -> str:
     """Remembered facts for the system prompt, marked as information and not instructions."""
     if not memories:
@@ -152,7 +245,8 @@ def profile_section(profile: dict | None) -> str:
         lines.append(f"- Name: {name}")
     if profile.get("preferred_work_time"):
         when = str(profile["preferred_work_time"]).lower()
-        lines.append(f"- Works best in the {when}. When several times are free for focused work, suggest {when} ones.")
+        hours = "evening (about 6-10 PM, not late at night)" if when == "night" else "morning (about 8 AM-12 PM)"
+        lines.append(f"- Works best in the {hours}. When several times are free for focused work, suggest those.")
     if profile.get("priorities"):
         lines.append(f"- Priorities, most important first: {', '.join(profile['priorities'][:10])}")
     if profile.get("hobbies"):
@@ -220,8 +314,10 @@ def run_agent(
     total_tokens, total_seconds = 0, 0.0  # for measuring speed in evals
     searched_free_time, proposals, nudged = False, 0, False  # for the reminder below
     failed_calls: dict[tuple, str] = {}  # tool calls that returned an error, so repeats can be refused
+    made: list[str] = []  # what each successful proposal suggested, for the answer if it runs out of rounds
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT.format(now=describe_now(ctx.now)) + profile_section(profile)
+        {"role": "system", "content": SYSTEM_PROMPT.format(now=describe_now(ctx.now), calendar=calendar_text(ctx.now))
+                                     + profile_section(profile)
                                      + memory_section(memories)},
         *(history or []),
         {"role": "user", "content": question},
@@ -231,41 +327,51 @@ def run_agent(
         request = {
             "model": model,
             "messages": messages,
-            "tools": [definition for definition, _ in TOOLS.values()],
+            "tools": offered_tools(ctx.asked),
             **SAMPLING,
-            "max_tokens": 8192,
+            "max_tokens": ROUND_TOKENS,
             "extra_body": EXTRA_SAMPLING,
         }
-        start = time.perf_counter()
-        response = client.chat.completions.create(**request)
-        seconds = round(time.perf_counter() - start, 2)
-        total_tokens += response.usage.completion_tokens if response.usage else 0
-        total_seconds += seconds
+        for attempt in ("thinking", "no thinking"):
+            start = time.perf_counter()
+            response = client.chat.completions.create(**request)
+            seconds = round(time.perf_counter() - start, 2)
+            total_tokens += response.usage.completion_tokens if response.usage else 0
+            total_seconds += seconds
 
-        message = response.choices[0].message
-        reasoning, answer = split_reasoning(message.model_dump())
-        tool_calls = [call.model_dump() for call in message.tool_calls or []]
-        raw_reasoning, from_thinking = reasoning, False
-        if not tool_calls and not answer:  # all thinking: maybe it never closed it (see tool_calls_in_thinking)
-            reasoning, tool_calls = tool_calls_in_thinking(reasoning)
-            from_thinking = bool(tool_calls)
-        log_call(
-            {
-                "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
-                "run_id": run_id,
-                "round": round_number,
-                "base_url": str(client.base_url),
-                "request": request,
-                "reasoning": raw_reasoning,
-                "answer": answer,
-                "tool_calls": tool_calls,
-                "tool_calls_from_thinking": from_thinking,
-                "finish_reason": response.choices[0].finish_reason,
-                "usage": response.usage.model_dump() if response.usage else None,
-                "seconds": seconds,
-            },
-            log_path,
-        )
+            message = response.choices[0].message
+            finish = response.choices[0].finish_reason
+            reasoning, answer = split_reasoning(message.model_dump())
+            tool_calls = [call.model_dump() for call in message.tool_calls or []]
+            raw_reasoning, from_thinking = reasoning, False
+            if not tool_calls and not answer:  # all thinking: maybe it never closed it (see tool_calls_in_thinking)
+                reasoning, tool_calls = tool_calls_in_thinking(reasoning)
+                from_thinking = bool(tool_calls)
+            log_call(
+                {
+                    "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
+                    "run_id": run_id,
+                    "round": round_number,
+                    "attempt": attempt,
+                    "base_url": str(client.base_url),
+                    "request": request,
+                    "reasoning": raw_reasoning,
+                    "answer": answer,
+                    "tool_calls": tool_calls,
+                    "tool_calls_from_thinking": from_thinking,
+                    "finish_reason": finish,
+                    "usage": response.usage.model_dump() if response.usage else None,
+                    "seconds": seconds,
+                },
+                log_path,
+            )
+            # Ran out of tokens without a tool call: the "answer" is unfinished thinking (or nothing). Redo the
+            # round without thinking instead of showing the user pages of it.
+            if tool_calls or finish != "length" or attempt == "no thinking":
+                break
+            request = {**request, "max_tokens": 1500, "extra_body": {**EXTRA_SAMPLING, **thinking_off(str(client.base_url))}}
+            if verbose:
+                print(f"round {round_number}: thinking ran out of tokens; asking again without thinking")
 
         if not tool_calls:  # no tool requested: this is the final answer
             # Small models often describe a plan instead of proposing it. Remind them once, in code.
@@ -283,10 +389,15 @@ def run_agent(
                 if verbose:
                     print(f"round {round_number}: said it suggests a delete or journal note but made none; reminding")
                 continue
+            if needs_shortening(answer):  # thinking out loud, or far longer than a chat bubble
+                answer = shorten(client, model, question, answer)
+            if proposals:  # it only suggested: "I've added" isn't true until the user accepts
+                answer = soften_claims(answer)
             if verbose:
                 print(f"round {round_number}: answered ({seconds}s)")
             return {
                 "answer": answer,
+                "gave_up": False,
                 "reasoning": reasoning,
                 "rounds": round_number,
                 "messages": messages,
@@ -311,12 +422,21 @@ def run_agent(
                 searched_free_time = True
             if name.startswith("propose_") and not result.startswith("Error"):
                 proposals += 1
+                summary = json.loads(result).get("summary", "")  # "Suggested new event 'X' on Monday, ... Nothing ..."
+                made.append(summary.split(". Nothing changes")[0].removeprefix("Suggested ").strip())
             messages.append({"role": "tool", "tool_call_id": call["id"], "content": result})
             if verbose:
                 print(f"round {round_number}: {name}({arguments}) ({seconds}s) -> {result[:100]}...")
 
+    # Out of rounds. If it made suggestions on the way, list them (they're real cards the user can accept)
+    # rather than "Sorry, I couldn't finish" above four good cards, as a real run did.
+    if made:
+        fallback = "Here's what I suggest:\n" + "\n".join(f"- {m}" for m in made) + "\nNothing changes until you accept."
+    else:
+        fallback = "Sorry, I couldn't finish that. Could you ask in a simpler way?"
     return {
-        "answer": "Sorry, I couldn't finish that. Could you ask in a simpler way?",
+        "answer": fallback,
+        "gave_up": True,  # for evals: the model didn't finish by itself, whatever the user was shown
         "reasoning": "",
         "rounds": MAX_ROUNDS,
         "messages": messages,

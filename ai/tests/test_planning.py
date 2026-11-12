@@ -108,9 +108,9 @@ def test_cannot_move_an_event_that_is_over():
         propose_move_event(ctx, "e2", "2026-10-07 16:00", "2026-10-07 18:00", "")
 
 
-def test_agent_offers_all_seven_tools():
+def test_agent_offers_all_eight_tools():
     assert set(TOOLS) == {"get_schedule", "find_free_slots", "propose_new_event", "propose_move_event",
-                          "propose_delete", "get_journal", "propose_journal_entry"}
+                          "propose_new_task", "propose_delete", "get_journal", "propose_journal_entry"}
 
 
 def test_free_slots_leave_out_full_days():
@@ -162,3 +162,59 @@ def test_events_already_over_dont_count():
     result = propose_new_event(late, "Study session", "2026-10-08 20:00", "2026-10-08 21:00", "")
     assert "Friday, October 9" in result["summary"]
     assert "Monday, October 5" not in result["summary"] and "Wednesday, October 7" not in result["summary"]
+
+
+@pytest.mark.parametrize("asked,allowed", [
+    ("Help me plan times to study for my CSE 320 makeup session every weekday", False),
+    ("I don't prefer studying after 11pm unless absolutely needed", False),
+    ("Can you put a study block at 11:30 pm tonight?", True),
+    ("I have a 3-hour assignment due tonight. When should I work on it?", True),
+    ("Schedule a run at 6am tomorrow", True),
+    ("Move my study session to 8 PM.", False),
+])
+def test_late_or_early_times_only_when_asked(asked, allowed):
+    ctx = context()
+    ctx.asked = asked
+    call = lambda: propose_new_event(ctx, "Study", "2026-10-06 23:00", "2026-10-07 00:00", "")  # noqa: E731
+    if allowed:
+        call()
+    else:
+        with pytest.raises(ToolError, match="very late at night"):
+            call()
+
+
+def test_ordinary_hours_need_no_permission():
+    ctx = context()
+    ctx.asked = "Find time for the gym."
+    propose_new_event(ctx, "Gym", "2026-10-07 21:00", "2026-10-07 22:00", "")
+
+
+def test_a_task_from_the_chat_keeps_its_own_note():
+    from ai.planning import propose_new_task, recheck
+
+    ctx = context()
+    result = propose_new_task(ctx, "Read 2 chapters of the novel", "2026-10-08", "About 1 hour")
+    [s] = ctx.store.suggestions("user-1")
+    assert s["type"] == "CREATE_TASK" and s["proposed_change"]["due"].startswith("2026-10-08T23:59")
+    assert "Suggested the task" in result["summary"] and recheck(ctx, s) == []
+    ctx.store.apply(s)
+    task = next(t for t in ctx.store.data["tasks"] if t["name"] == "Read 2 chapters of the novel")
+    assert (task["due"], task["description"]) == ("2026-10-08", "About 1 hour")
+    with pytest.raises(ToolError, match="already a task"):
+        propose_new_task(ctx, "read 2 chapters of the novel", "2026-10-08")
+    with pytest.raises(ToolError, match="already over"):
+        propose_new_task(ctx, "Late one", "2026-10-04")
+
+
+def test_tasks_only_when_asked_and_never_a_near_copy():
+    from ai.planning import propose_new_task
+
+    ctx = context()
+    ctx.asked = "Plan my week so I finish the MTH problem set."  # a real run added a copy of the task instead of time
+    with pytest.raises(ToolError, match="didn't ask to add a task"):
+        propose_new_task(ctx, "Work on reading", "2026-10-08")
+    ctx.asked = "Add a task to finish the MTH 133 problem set."
+    with pytest.raises(ToolError, match="already a task like this: 'MTH 133 problem set'"):
+        propose_new_task(ctx, "Finish MTH 133 problem set", "2026-10-08")
+    ctx.asked = "Can you add a task for reading my novel on Thursday?"
+    propose_new_task(ctx, "Read novel", "2026-10-08")

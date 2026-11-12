@@ -231,6 +231,45 @@ def similar_this_week(ctx: ToolContext, name: str, start: datetime) -> list[str]
     return found
 
 
+EARLIEST, LATEST = time(7, 0), time(23, 0)  # suggested times stay inside these unless the user asks otherwise
+CLOCK_TIME = re.compile(r"\b(\d{1,2})(?::\d{2})?\s*(a\.?m\.?|p\.?m\.?)|\b(\d{1,2}):\d{2}\b|\bmidnight\b", re.IGNORECASE)
+# Late is fine when the user asks for it, or when a deadline tonight needs it ("absolutely needed").
+LATE_WORDS = re.compile(r"\b(?:late at night|late night|all[- ]nighter|overnight|early morning|before sunrise|"
+                        r"due tonight|due at midnight|due by midnight|tonight at midnight)\b", re.IGNORECASE)
+# "I don't prefer studying after 11pm", "not past 10", "avoid late nights": a time they DON'T want.
+NOT_WANTED = re.compile(r"\b(?:don'?t|do not|not|never|avoid|rather not|prefer not|no)\b[^.!?]{0,40}"
+                        r"\b(?:after|past|later than|late|before|earlier than|early)\b", re.IGNORECASE)
+
+
+def asked_for_odd_hours(text: str) -> bool:
+    """True if the user asked for a time before 7 AM or from 11 PM on ("at 11:30 pm", "6am", "midnight", "late
+    at night"), and didn't say they don't want one ("I don't prefer studying after 11pm")."""
+    if NOT_WANTED.search(text):
+        return False
+    if LATE_WORDS.search(text):
+        return True
+    for match in CLOCK_TIME.finditer(text):
+        if match.group(0).lower() == "midnight":
+            return True
+        hour = int(match.group(1) or match.group(3))
+        if match.group(2):  # 12-hour: "11 pm" -> 23
+            hour = hour % 12 + (12 if match.group(2).lower().startswith("p") else 0)
+        if hour < EARLIEST.hour or hour >= LATEST.hour:
+            return True
+    return False
+
+
+def check_hours(ctx: ToolContext, start: datetime, end: datetime) -> None:
+    """Refuse very late or very early times the user didn't ask for. The 4B suggested 11 PM-midnight study
+    sessions every night for someone who "works best at night"."""
+    if start.time() >= EARLIEST and (end.date() == start.date() and end.time() <= LATEST):
+        return
+    if ctx.asked is not None and asked_for_odd_hours(ctx.asked):
+        return
+    raise ToolError(f"{describe_range(start, end)} is very late at night or very early. Suggest times between "
+                    "7 AM and 11 PM (find_free_slots lists them) unless the user asks for a late or early time")
+
+
 def dependency_note(depends_on: list[str]) -> str:
     if not depends_on:
         return ""
@@ -265,6 +304,7 @@ def propose_new_event(ctx: ToolContext, name: str, start: str, end: str, reason:
     tz = user_timezone(ctx)
     start_at = parse_local(start, "start", tz)
     end_at = parse_local(end, "end", tz)
+    check_hours(ctx, start_at, end_at)
     depends_on = check_time(ctx, start_at, end_at)
     similar = similar_this_week(ctx, name, start_at)  # before adding, so it doesn't list itself
 
@@ -338,6 +378,7 @@ def propose_move_event(ctx: ToolContext, event_id: str, new_start: str, new_end:
         raise ToolError(f"{event['name']} on {describe_range(old_start, old_end)} is already over")
     start_at = parse_local(new_start, "new_start", tz)
     end_at = parse_local(new_end, "new_end", tz)
+    check_hours(ctx, start_at, end_at)
     depends_on = check_time(ctx, start_at, end_at, ignore_event_id=event_id)  # it may overlap its own old time
 
     suggestion = ctx.store.add_suggestion(
@@ -360,6 +401,63 @@ def propose_move_event(ctx: ToolContext, event_id: str, new_start: str, new_end:
     }
 
 
+PROPOSE_NEW_TASK_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "propose_new_task",
+        "description": (
+            "Suggest adding a task to the user's task list: something to get done by a day, like an assignment, "
+            "reading or an errand. Use it when the user asks to add a task or a to-do. For a block of time on the "
+            "calendar, use propose_new_event instead. Nothing changes until the user accepts."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The task, e.g. 'Read 2 chapters of the novel'"},
+                "due_date": {"type": "string", "description": "The day it's for, YYYY-MM-DD (today or later)"},
+                "details": {"type": "string", "description": "Optional short note, e.g. 'About 1 hour'"},
+            },
+            "required": ["name", "due_date"],
+        },
+    },
+}
+
+
+TASK_WORDS = re.compile(r"\b(?:tasks?|to-?dos?|to do list|todo list|checklist|to my list)\b", re.IGNORECASE)
+
+
+def propose_new_task(ctx: ToolContext, name: str, due_date: str, details: str = "") -> dict:
+    # Asked to plan time, the 4B sometimes added a copy of a task already on the list ("Finish MTH 133 problem set")
+    # instead of blocking time for it: new tasks only when the user asks for one, and never a near-copy.
+    require_asked(ctx, TASK_WORDS, "add a task (to plan time for something, use propose_new_event)")
+    if not isinstance(name, str) or not name.strip():
+        raise ToolError("name can't be empty")
+    name = name.strip()
+    tz = user_timezone(ctx)
+    day = parse_day(due_date, "due_date")
+    today = ctx.now.astimezone(tz).date()
+    if day < today:
+        raise ToolError(f"{format_day(day)} is already over; a new task needs a day from today ({today.isoformat()}) on")
+    for t in ctx.store.tasks(ctx.user_id, today - timedelta(days=14), today + timedelta(days=60)):
+        shared = key_words(t["name"]) & key_words(name)
+        if t["status"] != "COMPLETED" and len(shared) >= 2 and t["name"].lower() != name.lower():
+            raise ToolError(f"there's already a task like this: '{t['name']}' (due {format_day(date.fromisoformat(t['due']))}). "
+                            "To make time for it, use propose_new_event instead of adding it again")
+    same = [t for t in ctx.store.tasks(ctx.user_id, day, day) if t["name"].lower() == name.lower()]
+    same += [s for s in ctx.store.suggestions(ctx.user_id, status="PENDING") if s["type"] == "CREATE_TASK"
+             and s["proposed_change"]["name"].lower() == name.lower() and s["proposed_change"]["due"][:10] == day.isoformat()]
+    if same:
+        raise ToolError(f"there's already a task '{name}' on {format_day(day)}")
+    due = datetime.combine(day, time(23, 59), tzinfo=tz)
+    suggestion = ctx.store.add_suggestion(ctx.user_id, {
+        "type": "CREATE_TASK", "target_id": None, "description": "Add to your tasks",
+        "proposed_change": {"name": name, "due": due.isoformat(), "kind": "task", "description": str(details or "").strip()[:300]},
+        "depends_on": [], "created_at": ctx.now.isoformat(), "expires_at": due.isoformat(),
+    })
+    return {"suggestion_id": suggestion["suggestion_id"], "status": "PENDING",
+            "summary": f"Suggested the task '{name}' for {format_day(day)}. Nothing changes until the user accepts it."}
+
+
 DELETE_TYPES = {"event": "DELETE_EVENT", "task": "DELETE_TASK", "journal": "DELETE_JOURNAL"}
 
 # Words that ask to delete something. A small model sometimes adds a delete nobody asked for (asked for time
@@ -375,6 +473,14 @@ JOURNAL_WORDS = re.compile(r"\b(?:journal\w*|diary|note (?:down|that|in|it)|writ
 def require_asked(ctx: ToolContext, words: re.Pattern, what: str) -> None:
     if ctx.asked is not None and not words.search(ctx.asked):
         raise ToolError(f"the user didn't ask to {what}, so don't suggest it; do only what they asked")
+
+
+def require_named(ctx: ToolContext, name: str) -> None:
+    """A delete must be for something the user named. Asked to cancel a piano lesson that wasn't on the calendar,
+    the 4B suggested deleting that day's study session instead."""
+    if ctx.asked is not None and not key_words(name) & key_words(ctx.asked):
+        raise ToolError(f"the user didn't mention '{name}'. If what they asked about isn't on the calendar, tell them; "
+                        "if they meant this one some other way (by its time, say), ask them to confirm it first")
 
 PROPOSE_DELETE_TOOL = {
     "type": "function",
@@ -416,6 +522,7 @@ def propose_delete(ctx: ToolContext, what: str, id: str, reason: str) -> dict:  
             raise ToolError(f"{event['name']} is fixed (changeable: false) and can't be deleted")
         if id in pending_moves(ctx):
             raise ToolError(f"{event['name']} has a pending move ({pending_moves(ctx)[id]}); it can't also be deleted")
+        require_named(ctx, event["name"])
         start = datetime.fromisoformat(event["start"]).astimezone(tz)
         end = datetime.fromisoformat(event["end"]).astimezone(tz)
         change = {"what": "event", "id": id, "name": event["name"], "start": start.isoformat(), "end": end.isoformat()}
@@ -426,6 +533,7 @@ def propose_delete(ctx: ToolContext, what: str, id: str, reason: str) -> dict:  
             raise ToolError(f"there is no task with id {id!r}; use get_schedule to find task ids")
         if not task["changeable"]:
             raise ToolError(f"{task['name']} is fixed (changeable: false) and can't be deleted")
+        require_named(ctx, task["name"])
         change = {"what": "task", "id": id, "name": task["name"], "due": task["due"]}
         described = f"the task {task['name']} (due {format_day(date.fromisoformat(task['due']))})"
     else:

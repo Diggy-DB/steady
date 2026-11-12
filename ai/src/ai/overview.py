@@ -288,6 +288,25 @@ def welcome() -> dict:
             "quote": QUOTES[2], "encouragement": "Every good routine starts with one small step."}
 
 
+def tiles(s: dict, content: dict) -> dict:
+    """The three tiles on the home page (Went well / Didn't get to / Focus today), from the counted facts, so
+    they can't be made up. Focus is the model's first schedule suggestion, else the next thing due."""
+    y = s["yesterday"]
+    went = [f"Finished {name}" for name in y["tasks_done"]]
+    if y["journal"]:
+        went.append("Wrote in your journal" + (f" ({s['journal_streak']}-day streak)" if s["journal_streak"] > 1 else ""))
+    if not went and y["events"]:
+        went.append(f"{len(y['events'])} event{'s' * (len(y['events']) != 1)} on your calendar ({y['hours_planned']} h)")
+    missed = [name for name in y["tasks_due"] if name not in y["tasks_done"]]
+    missed += [o.split(" (was due")[0] for o in s["overdue"] if o.split(" (was due")[0] not in missed]
+    schedule = [x for x in content.get("suggestions") or [] if x.get("kind") == "schedule"]
+    focus = (schedule[0] if schedule else {}).get("text") or (f"Make time for {s['due_soon'][0]}" if s["due_soon"] else "")
+    if not focus and content.get("suggestions"):
+        focus = content["suggestions"][0]["text"]
+    return {"went_well": went[:4], "missed": missed[:4], "focus": focus,
+            "focus_ask": (schedule[0] if schedule else {}).get("ask", "")}
+
+
 def daily_overview(ctx: ToolContext, client: OpenAI, model: str, refresh: bool = False) -> dict:
     """Today's overview: the saved one, or a new one (saved for next time)."""
     tz = ZoneInfo(ctx.store.user(ctx.user_id)["timezone"])
@@ -310,6 +329,8 @@ def daily_overview(ctx: ToolContext, client: OpenAI, model: str, refresh: bool =
     content.setdefault("compared", compared_text(s) if has_data(s) else "")
     overview = {"date": today.isoformat(), "looks_back_at": s["yesterday"]["date"], "written_by": written_by,
                 "created_at": ctx.now.isoformat(), **content, "quote": {"text": quote[0], "source": quote[1]},
-                "stats": chips(s)}
+                "stats": chips(s), "tiles": tiles(s, content),
+                # the "4/6 done" sticker: tasks that were due yesterday, and how many got done
+                "tasks_yesterday": {"done": len(s["yesterday"]["tasks_done"]), "due": len(s["yesterday"]["tasks_due"])}}
     ctx.store.save_overview(ctx.user_id, today, overview)
     return overview

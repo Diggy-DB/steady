@@ -449,7 +449,7 @@ def run_scenario(client: openai.OpenAI, model: str, scenario: Scenario, log_path
         tool_calls=tool_calls_from(result["messages"]),
         suggestions=store.suggestions(scenario.user_id, status="PENDING"),
         rounds=result["rounds"],
-        gave_up=result["rounds"] >= MAX_ROUNDS and result["answer"].startswith("Sorry, I couldn't finish"),
+        gave_up=result.get("gave_up", result["rounds"] >= MAX_ROUNDS and result["answer"].startswith("Sorry, I couldn't finish")),
     )
     failures = [problem for check in scenario.checks if (problem := check(transcript))]
     return {

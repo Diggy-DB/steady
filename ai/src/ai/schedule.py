@@ -6,6 +6,7 @@ trusted with (which user, what time it is, time zone math) is decided here.
 
 import copy
 import json
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
@@ -34,6 +35,7 @@ class FixtureStore:
         self._suggestions: list[dict] = []
         self.activity: list[dict] = []
         self._overviews: dict[tuple[str, str], dict] = {}
+        self._lock = threading.Lock()  # the demo server answers requests on several threads
 
     def user(self, user_id: str) -> dict:
         for user in self.data["users"]:
@@ -104,6 +106,15 @@ class FixtureStore:
             if s["suggestion_id"] == suggestion_id:
                 s["status"] = status
 
+    def claim(self, suggestion_id: str, from_status: str, to_status: str) -> bool:
+        """Change the status only if it is still `from_status`; False if another request got there first."""
+        with self._lock:
+            for s in self._suggestions:
+                if s["suggestion_id"] == suggestion_id and s["status"] == from_status:
+                    s["status"] = to_status
+                    return True
+            return False
+
     def log(self, user_id: str, action: str, target_type: str, target_id: str, performed_by: str, details: dict) -> None:
         self.activity.append(
             {"user_id": user_id, "action": action, "target_type": target_type, "target_id": target_id,
@@ -117,7 +128,7 @@ class FixtureStore:
             due = datetime.fromisoformat(change["due"])
             self.data["tasks"].append(
                 {"task_id": f"ai-{suggestion['suggestion_id']}", "user_id": suggestion["user_id"], "name": change["name"],
-                 "description": task_description(due), "due": due.date().isoformat(), "status": "NOT_STARTED",
+                 "description": (change.get("description", "") if change.get("kind") == "task" else task_description(due)), "due": due.date().isoformat(), "status": "NOT_STARTED",
                  "changeable": True}
             )
         elif suggestion["type"] == "CREATE_EVENT":

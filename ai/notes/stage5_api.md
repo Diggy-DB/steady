@@ -77,7 +77,7 @@ Suggestion types (`type`) and what accepting one does:
 |---|---|---|
 | `CREATE_EVENT` | `name`, `start`, `end` (and `recurrence_rule` for a weekly class) | adds a row to `calendar_events` |
 | `MOVE_EVENT` | `start`, `end`; the event is `target_id` | changes that event's times |
-| `CREATE_TASK` | `name`, `due` (a syllabus deadline) | adds a row to `tasks` |
+| `CREATE_TASK` | `name`, `due`; from a syllabus `kind: "deadline"`, from the chat (`propose_new_task`) `kind: "task"` and `description` | adds a row to `tasks` |
 | `DELETE_EVENT` / `DELETE_TASK` | `what`, `id`, `name`, and the event's `start`/`end` or the task's `due` | deletes that row |
 | `DELETE_JOURNAL` | `what: "journal"`, `id` (the entry's date), `preview` | deletes that day's journal entry |
 | `ADD_JOURNAL` | `date`, `text`, `adds_to_existing` | adds `text` to that day's entry, or starts one |

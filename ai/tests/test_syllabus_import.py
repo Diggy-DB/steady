@@ -14,6 +14,7 @@ from test_agent import FakeClient, reply
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "syllabi"
 NOW = datetime(2026, 12, 15, 10, 0, tzinfo=ZoneInfo("America/Detroit"))
+TRUTH = json.loads((FIXTURES / "truth.json").read_text())
 TEXT = "CSE 260 Spring 2027. Lectures Tue/Thu 12:40-2:00 PM. HW 1 (Fri 1/22) due 11:59 PM. MIDTERM 1 in class (Thu 2/18)."
 
 
@@ -254,3 +255,59 @@ def test_a_long_scan_is_refused_with_advice():
     pages = [syllabus.Page(text="", image=b"x")] * (syllabus.MAX_IMAGE_PAGES + 1)
     with pytest.raises(ToolError, match="send the pages with the schedule"):
         syllabus.read(syllabus.Reader(None, "fake", None, {}), pages)
+
+
+@pytest.mark.parametrize("segment,days", [
+    ("Lectures Tuesday & Thursday, 12:40 - 2:00 PM", {"Tue", "Thu"}),
+    ("Lectures meet Monday, Wednesday and Friday from 9:10 to 10:00 AM", {"Mon", "Wed", "Fri"}),
+    ("We meet Tuesdays and Thursdays from 11:30 a.m.", {"Tue", "Thu"}),
+    ("Class meets Monday through Thursday, 10:00-11:50 AM", {"Mon", "Tue", "Wed", "Thu"}),
+    ("Lecture MWF 10:20-11:10 AM", {"Mon", "Wed", "Fri"}),
+    ("TTh 2:40-4:00 PM", {"Tue", "Thu"}),
+    ("TR 8:30", {"Tue", "Thu"}),
+    ("M/W/F 9:10", {"Mon", "Wed", "Fri"}),
+    ("Mon-Fri 8:00 AM", {"Mon", "Tue", "Wed", "Thu", "Fri"}),
+    ("M-F 8:00 AM", {"Mon", "Tue", "Wed", "Thu", "Fri"}),
+    ("Tues & Thurs 1:00 PM", {"Tue", "Thu"}),
+    ("Room W101, 10:20 AM, A102 Wells Hall", set()),  # no days here, and "W" or "AM" aren't days
+])
+def test_days_written_in_the_syllabus(segment, days):
+    assert syllabus.days_in(segment) == days
+
+
+def test_meeting_days_the_model_misread_are_corrected_from_the_text():
+    # The real bug: a Tue/Thu (or MWF) class read as every weekday.
+    checked = syllabus.check(answer(meetings=[{"kind": "lecture", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+                                               "start": "12:40 PM", "end": "2:00 PM"}]), NOW, TEXT)
+    assert checked.meetings[0]["days"] == ["Tue", "Thu"]
+    assert any("days corrected to Tue/Thu" in n for n in checked.notes)
+
+
+def test_two_meetings_at_the_same_time_keep_their_own_days():
+    text = "MTH 132. Lecture MWF 10:20-11:10 AM; recitation Thursday 10:20-11:10 AM. Spring 2027."
+    meetings = [{"kind": "lecture", "days": ["Mon", "Tue", "Wed", "Thu", "Fri"], "start": "10:20 AM", "end": "11:10 AM"},
+                {"kind": "recitation", "days": ["Mon"], "start": "10:20 AM", "end": "11:10 AM"}]
+    checked = syllabus.check(answer(meetings=meetings), NOW, text)
+    assert [m["days"] for m in checked.meetings] == [["Mon", "Wed", "Fri"], ["Thu"]]
+
+
+def test_photos_keep_the_days_as_read():  # no text to check against
+    meetings = [{"kind": "lecture", "days": ["Mon", "Wed"], "start": "12:40 PM", "end": "2:00 PM"}]
+    assert syllabus.check(answer(meetings=meetings), NOW, None).meetings[0]["days"] == ["Mon", "Wed"]
+
+
+def test_an_old_syllabus_adds_no_weekly_classes():
+    old = answer(term="Fall 2024", term_start="2024-08-26", term_end="2024-12-13", no_class=[])
+    checked = syllabus.check(old, NOW, TEXT.replace("Spring 2027", "Fall 2024"))
+    assert checked.meetings == [] and any("semester ended on December 13, 2024" in d for d in checked.dropped)
+
+
+def test_every_text_syllabus_gives_the_right_days():
+    for name, truth in TRUTH.items():
+        if not name.endswith(".pdf"):
+            continue
+        pages = syllabus.load_pages((FIXTURES / name).read_bytes(), name)
+        if syllabus.has_text(pages):
+            text = "\n\n".join(p.text for p in pages)
+            for m in truth["meetings"]:
+                assert syllabus.days_from_text(text, m["kind"], m["start"]) == m["days"], (name, m)

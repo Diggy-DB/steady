@@ -161,6 +161,12 @@ class SupabaseStore:
         if not self._write("PATCH", "ai_suggestions", [("suggestion_id", f"eq.{suggestion_id}")], {"status": status}):
             raise LookupError(f"suggestion {suggestion_id} wasn't updated")
 
+    def claim(self, suggestion_id: str, from_status: str, to_status: str) -> bool:
+        """Change the status only if it is still `from_status`, in one UPDATE ... WHERE status = from_status, so
+        two requests at once (a double tap on Accept) can't both get it. False if another request got there first."""
+        params = [("suggestion_id", f"eq.{suggestion_id}"), ("status", f"eq.{from_status}")]
+        return bool(self._write("PATCH", "ai_suggestions", params, {"status": to_status}))
+
     def apply(self, suggestion: dict) -> None:
         """Make an accepted suggestion real (events, tasks, journals), with the user's own token."""
         tz = ZoneInfo(self.user(suggestion["user_id"])["timezone"])
@@ -190,7 +196,7 @@ class SupabaseStore:
             return
         if suggestion["type"] == "CREATE_TASK":  # a deadline: a row in tasks, due that day
             due = datetime.fromisoformat(change["due"]).astimezone(tz)
-            body = {"user_id": suggestion["user_id"], "name": change["name"], "description": task_description(due),
+            body = {"user_id": suggestion["user_id"], "name": change["name"], "description": (change.get("description", "") if change.get("kind") == "task" else task_description(due)),
                     "date": due.date().isoformat(), "status": "NOT_STARTED", "changeable": True, "created_by": "AI"}
             if not self._write("POST", "tasks", None, body):
                 raise LookupError(f"suggestion {suggestion['suggestion_id']} couldn't be applied")

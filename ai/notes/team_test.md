@@ -83,6 +83,22 @@ build kernels (`ninja`); and vLLM's default of hundreds of requests at once is r
 8. **Write down** anything wrong: the question or file, what it did, what it should have done. Wrong dates
    from syllabi are the most useful reports.
 
+## Fixed after the first team test (Nov 11)
+
+| Seen | Cause | Fix |
+|---|---|---|
+| An accepted event appeared twice | two Accepts at once (a double tap, or "Accept all" plus a card) both passed the checks before either finished; the live database had 1 suggestion accepted twice | Accept first claims the suggestion (`PENDING` -> `ACCEPTED` in one `UPDATE ... WHERE status = 'PENDING'`), so only one request applies it; the buttons lock while it's answered |
+| A Mon/Wed/Fri lecture added for every weekday | the model misread the meeting days (both weekly classes ever imported were saved as Mon-Fri) | the days are read from the syllabus text on the line with the class time ("MWF", "Mon, Wed, Fri", "Monday through Thursday", ...) and override the model; right for all 19 meetings in the text test syllabi. A syllabus whose semester is over adds no weekly class |
+| "Next week's tasks" showed the week after | the 4B miscounts dates | the prompt spells out this week, next week and the next 14 days, worked out in code |
+| Study sessions at 11 PM-midnight | "works best at night" taken literally, and nothing stopped late times | night means about 6-10 PM; times before 7 AM or past 11 PM are refused unless the user asks for one ("at 11:30 pm") or a deadline tonight needs it |
+| The reply was the model's whole thinking | when thinking runs out of tokens without closing, vLLM returns it all as the answer | such a round is redone without thinking; answers that are long or read like thinking are rewritten into at most 4 short sentences |
+| "Can't reach the AI server" for some prompts, every time, with the server up | most likely the leaked thinking: it went back with every later message as history | long history turns are cut (1,500 characters) instead of refused, error messages aren't sent back as history, polling retries short drops, and the API restarts itself if it stops. `scripts/check_pod.py <pod URL>` checks whether long histories get through the proxy |
+| "I've added..." for what was only suggested | the 4B ignores the prompt rule | reworded in code to "I suggest adding..." when the turn made suggestions |
+| "Add a task" made calendar events | the chat had no task tool | `propose_new_task` (a to-do due on a day), only when the user asks for a task and never a near-copy of one on the list (planning runs used it to copy existing tasks instead of blocking time) |
+| "Sorry, I couldn't finish that" above 4 good cards | it ran out of rounds after proposing | it lists the suggestions it made instead |
+| (found in the evals) "Cancel my piano lesson" (there was none) suggested deleting the study session | the 4B picked another event | a delete must be for something the user named (a word in common); otherwise the model is told to say it's not there, or ask |
+| (found in the evals) planning runs reached for the new task tool 21 times in 17 runs | 8 tools are a lot for a 4B | each request gets the 4 planning tools; the task, delete and journal tools only when the message (or Steady's last reply) is about them |
+
 ## Known limits
 
 - iPhone HEIC photos are refused from a computer (phones convert them to JPEG when uploading). Send a screenshot.

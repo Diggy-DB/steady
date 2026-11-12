@@ -140,6 +140,20 @@ case("lookup", "riley_shift_length", "riley", "2027-03-12 18:00", "How many hour
       "Your night shift runs Saturday 10 PM to Sunday 6 AM. Daylight saving starts that night, so it's 7 hours."],
      wrong=[[schedule("2027-03-13", "2027-03-14"), "Your night shift is 10 PM to 6 AM, so 8 hours."]])
 
+# "Next week" means the coming Monday-Sunday. A real run looked up the week after (the prompt now spells out the
+# dates). Wednesday Nov 18: next week is Nov 23-29; the ECON reading is due Nov 30, the week after.
+case("lookup", "chris_due_next_week", "chris", "2026-11-18 10:00", "Which tasks are due next week?",
+     [calls("get_schedule"), mentions_any("shopping"), avoids("econ", "reading"), proposes_nothing()],
+     [schedule("2026-11-23", "2026-11-29"), "Next week you have one task: your holiday shopping list, due Wednesday."],
+     wrong=[[schedule("2026-11-30", "2026-12-06"), "Next week: your ECON 101 reading, due Monday."],
+            [schedule("2026-11-23", "2026-11-30"), "Next week: the holiday shopping list and the ECON 101 reading."]])
+case("lookup", "maya_next_week", "maya", "2026-10-07 18:00", "What does my next week look like?",
+     [calls("get_schedule"), mentions_any("midterm", "stt 200"), mentions_any("library", "soccer", "lecture"), proposes_nothing()],
+     [schedule("2026-10-12", "2026-10-18"),
+      "Next week is busy: lectures every weekday morning, your library job Monday and Wednesday, soccer Tuesday and "
+      "Thursday, and the STT 200 midterm Thursday night."],
+     wrong=[[schedule("2026-10-19", "2026-10-25"), "Next week looks completely free."]])
+
 # ---- 2. move: a changeable event to a free time -------------------------------------------------------
 case("move", "alex_study_8pm", "alex", "2026-10-05 18:30", "Move my study session to 8 PM.",
      # tonight's (e2) is the natural reading; asking which one is fine too

@@ -227,8 +227,8 @@ def test_an_old_day_that_has_an_entry_can_still_be_added_to(ctx):
 @pytest.mark.parametrize("asked,allowed", [
     ("I need two hours tomorrow for my BIO lab report. When?", False),  # the real run that added a delete
     ("I'm skipping the gym tomorrow, take it off my calendar.", True),
-    ("Cancel movie night.", True),
-    ("I don't need the study block on Friday anymore.", True),
+    ("Cancel the gym.", True),
+    ("I don't need the gym on Tuesday anymore.", True),
     ("Should I delete your gym session?\nyes please", True),  # Steady asked, the user said yes
 ])
 def test_deletes_need_the_user_to_ask(ctx, asked, allowed):
@@ -262,3 +262,17 @@ def test_the_agent_tells_the_tools_what_was_asked(ctx, monkeypatch):
     client = FakeClient([reply(tool_calls=[("propose_delete", {"what": "task", "id": "t1", "reason": "x"})]), reply("Done.")])
     run_agent(client, "fake", ctx, "I need two hours tomorrow for my BIO lab report.", verbose=False)
     assert "didn't ask to delete" in client.requests[1]["messages"][-1]["content"] and ctx.store.suggestions("user-1") == []
+
+
+@pytest.mark.parametrize("asked,item,allowed", [
+    ("Cancel my piano lesson on Wednesday.", "e6", False),  # no piano lesson: not the study session instead
+    ("Cancel Wednesday's study session.", "e6", True),
+    ("Did you want me to delete Wednesday's study session?\nyes", "e6", True),  # named in Steady's question
+])
+def test_a_delete_must_be_for_something_the_user_named(ctx, asked, item, allowed):
+    ctx.asked = asked
+    if allowed:
+        propose_delete(ctx, "event", item, "As you asked.")
+    else:
+        with pytest.raises(ToolError, match="didn't mention 'Study session'"):
+            propose_delete(ctx, "event", item, "")
