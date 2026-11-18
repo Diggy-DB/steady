@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
+import { signInWithGoogle } from "../lib/auth";
 import { Alert, Box, Field, Logo, Marquee, Sticker, ThemeToggle } from "../components/ui";
-import { ArrowRight, Check, Eye, EyeOff, Lock } from "../components/ui/icons";
+import { ArrowRight, Check, Eye, EyeOff, GoogleG, Lock } from "../components/ui/icons";
 
 // Supabase's messages, in plain language.
 export function friendlyAuthError(message = "") {
@@ -40,6 +41,18 @@ function Login() {
     const { error: authError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
     setBusy(false);
     if (authError) fail(friendlyAuthError(authError.message));
+  }
+
+  // Off to Google; Supabase sends them back here signed in (a first visit makes a new account).
+  async function handleGoogle() {
+    setBusy(true);
+    setError("");
+    try {
+      await signInWithGoogle();
+    } catch (err) {
+      setBusy(false);
+      fail(err.message);
+    }
   }
 
   return (
@@ -85,6 +98,11 @@ function Login() {
               {busy ? "Logging in…" : <>Log in <ArrowRight width={20} height={20} /></>}
             </button>
           </form>
+
+          <p className="or-line"><span>or</span></p>
+          <button type="button" className="btn big full surface google-btn" onClick={handleGoogle} disabled={busy}>
+            <GoogleG size={22} /> Continue with Google
+          </button>
 
           <hr className="divider" />
           <div className="signup-cta">

@@ -303,7 +303,9 @@ def changes_within(start: datetime, end: datetime) -> Check:
                 continue
             begin, finish = (datetime.fromisoformat(s["proposed_change"][k]) for k in ("start", "end"))
             if begin < start or finish > end:
-                return f"suggested {s['proposed_change']['name']} at {begin:%a %H:%M}, outside {start:%a %H:%M}-{end:%a %H:%M}"
+                # A move has no name of its own (only the new times), so name the event it moves.
+                what = s["proposed_change"].get("name") or f"moving {s.get('target_id')}"
+                return f"suggested {what} at {begin:%a %H:%M}, outside {start:%a %H:%M}-{end:%a %H:%M}"
         return None
 
     return described(check, f"every suggestion is between {when_text(start)} and {when_text(end)}")
@@ -468,6 +470,40 @@ def tool_calls_from(messages: list[dict]) -> list[dict]:
     ]
 
 
+def score(checks: list[Check], transcript: Transcript) -> list[str]:
+    """What the checks found wrong. A check that crashes counts as a failure with its error instead of ending the
+    whole eval run: on Nov 12 a check expected a name on a move suggestion and stopped a load test halfway."""
+    failures = []
+    for check in checks:
+        try:
+            problem = check(transcript)
+        except Exception as error:  # noqa: BLE001 (any bug in a check)
+            problem = f"check crashed ({getattr(check, 'text', 'a check')}): {error!r}"
+        if problem:
+            failures.append(problem)
+    return failures
+
+
+def errored_run(scenario: Scenario, error: Exception) -> dict:
+    """The result of a run that stopped with an error (e.g. the model server refused a too-long chat): a failure,
+    so one bad run doesn't end an eval or a training-data session."""
+    return {"scenario": scenario.name, "question": scenario.question, "category": scenario.category, "passed": False,
+            "failures": [f"run crashed: {error!r}"[:300]], "tokens": 0, "seconds": 0, "rounds": 0, "tools": [],
+            "suggestions": [], "answer": "", "run_id": "", "nudged": False, "redone": 0, "messages": [], "reasoning": ""}
+
+
+def run_scenario_safely(client: openai.OpenAI, model: str, scenario: Scenario, log_path: Path = EVAL_LOG) -> dict:
+    """run_scenario, with any error but "can't reach the server" turned into a failed run."""
+    try:
+        return run_scenario(client, model, scenario, log_path)
+    except openai.APITimeoutError as error:  # one slow request; the server is there
+        return errored_run(scenario, error)
+    except openai.APIConnectionError:
+        raise  # the server is gone: stop
+    except Exception as error:  # noqa: BLE001
+        return errored_run(scenario, error)
+
+
 def run_scenario(client: openai.OpenAI, model: str, scenario: Scenario, log_path: Path = EVAL_LOG) -> dict:
     """Run one scenario once, with a fresh store, and score it."""
     store = FixtureStore(data=scenario.data) if scenario.data else FixtureStore()
@@ -483,7 +519,7 @@ def run_scenario(client: openai.OpenAI, model: str, scenario: Scenario, log_path
         rounds=result["rounds"],
         gave_up=result.get("gave_up", result["rounds"] >= MAX_ROUNDS and result["answer"].startswith("Sorry, I couldn't finish")),
     )
-    failures = [problem for check in scenario.checks if (problem := check(transcript))]
+    failures = score(scenario.checks, transcript)
     return {
         "scenario": scenario.name,
         "question": scenario.question,

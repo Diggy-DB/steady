@@ -7,6 +7,7 @@ The tokenizer tests run everywhere; the rest needs the training libraries:
 
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -109,10 +110,15 @@ def test_train_then_merge_gives_the_same_model(tmp_path):
     tiny_qwen35(base)
     data = tmp_path / "data.jsonl"
     data.write_text("\n".join(json.dumps(EXAMPLE) for _ in range(3)) + "\n")
-    run = lambda *args: subprocess.run([sys.executable, *args], cwd=AI, check=True, capture_output=True, text=True)
+    # W&B offline (when it's installed): the logging code runs, nothing is sent anywhere.
+    env = {**os.environ, "WANDB_MODE": "offline", "WANDB_DIR": str(tmp_path), "WANDB_SILENT": "true"}
+    run = lambda *args: subprocess.run([sys.executable, *args], cwd=AI, check=True, capture_output=True, text=True, env=env)
     trained = run("scripts/train_lora.py", "--base", str(base), "--data", str(data), "--out", str(lora),
                   "--max-steps", "3", "--accum", "1", "--lr", "0.05", "--rank", "4")
-    assert "Saved the adapter" in trained.stdout
+    assert "Saved the adapter" in trained.stdout and "logging failed" not in trained.stdout  # per update or final
+    assert "weights changed by" in trained.stdout
+    if importlib.util.find_spec("wandb"):
+        assert "W&B didn't start" not in trained.stdout and list(tmp_path.glob("wandb/offline-run-*"))
     merging = run("scripts/merge_lora.py", "--base", str(base), "--adapter", str(lora), "--out", str(merged))
     # every LoRA'd layer changed: 3 linear-attention layers x (5 + 3 feed-forward) + 1 attention layer x (4 + 3)
     assert "Merged 31 weights" in merging.stdout

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Field, ProgressBar } from "../ui";
 import Modal from "../ui/Modal";
 import { Check, Lock, Pencil, Plus, Repeat, Trash } from "../ui/icons";
@@ -13,9 +13,11 @@ const COLORS = ["blue", "orange", "green", "purple"];
 const minutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
 const clock = (hhmm) => {
   const h = Number(hhmm.slice(0, 2));
-  return `${h % 12 || 12}:${hhmm.slice(3, 5)}${h < 12 ? " AM" : " PM"}`;
+  return `${h % 12 || 12}:${hhmm.slice(3, 5)}${h < 12 || h === 24 ? " AM" : " PM"}`;
 };
-const span = (e) => `${clock(e.start_time)} – ${clock(e.end_time)}`;
+// The event's times; an event cut at midnight (eventsOn) keeps its real ones: "11:00 PM – 1:00 AM Thu".
+const span = (e) => e.when ?? `${clock(e.start_time)} – ${clock(e.end_time)}`;
+const weekday = (iso) => new Date(`${iso}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" });
 // A stable color per event, from its id.
 const colorOf = (id) => COLORS[[...String(id)].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % COLORS.length];
 const localHHMM = (iso) => {
@@ -28,11 +30,23 @@ const todayIso = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 
-// The day's events (ending at midnight at the latest), earliest first.
+// The day's events, earliest first. One that runs past midnight shows on every day it covers, cut at midnight
+// (00:00 to 24:00 on that day), with its real times in `when`.
 export function eventsOn(events, date) {
   return events
-    .filter((e) => e.start_date === date)
-    .map((e) => ({ ...e, end_time: e.end_date && e.end_date !== e.start_date ? "24:00" : e.end_time }))
+    .filter((e) => {
+      const last = e.end_date || e.start_date;
+      if (e.start_date === date) return true;
+      return e.start_date < date && last >= date && !(last === date && e.end_time.slice(0, 5) === "00:00");
+    })
+    .map((e) => {
+      const last = e.end_date || e.start_date;
+      const starts = e.start_date === date;
+      const ends = last === date;
+      if (starts && ends) return e;
+      const when = `${clock(e.start_time)}${starts ? "" : ` ${weekday(e.start_date)}`} – ${clock(e.end_time)}${ends ? "" : ` ${weekday(last)}`}`;
+      return { ...e, start_time: starts ? e.start_time : "00:00", end_time: ends ? e.end_time : "24:00", when };
+    })
     .sort((a, b) => a.start_time.localeCompare(b.start_time));
 }
 
@@ -90,12 +104,13 @@ function EventBlock({ e, style, onOpen }) {
   );
 }
 
+// The whole day, 12 AM to 12 AM, in a box that scrolls. It opens at the part that matters: around now (today),
+// else just before the first event, else 8 AM.
 export function Timeline({ date, events, suggestions, onOpenEvent }) {
   const items = eventsOn(events, date);
   const ghosts = ghostsOn(suggestions, date, events);
-  const all = [...items, ...ghosts];
-  const first = Math.min(8, ...all.map((e) => Math.floor(minutes(e.start_time) / 60)));
-  const last = Math.max(21, ...all.map((e) => Math.ceil(minutes(e.end_time) / 60)));
+  const first = 0;
+  const last = 24;
   const top = (hhmm) => ((minutes(hhmm) - first * 60) * HOUR_PX) / 60;
   const height = (e) => Math.max(22, ((minutes(e.end_time) - minutes(e.start_time)) * HOUR_PX) / 60);
   const place = (e) => ({
@@ -111,26 +126,38 @@ export function Timeline({ date, events, suggestions, onOpenEvent }) {
   const nowMin = now.getHours() * 60 + now.getMinutes();
   const showNow = date === todayIso() && nowMin >= first * 60 && nowMin <= last * 60;
 
+  const scroller = useRef(null);
+  const earliest = items.length ? minutes(items[0].start_time) : null;
+  useEffect(() => {
+    if (!scroller.current) return;
+    const current = new Date();
+    const minute = date === todayIso() ? current.getHours() * 60 + current.getMinutes() - 90
+      : earliest !== null ? earliest - 30 : 8 * 60;
+    scroller.current.scrollTop = Math.max(0, (minute * HOUR_PX) / 60);
+  }, [date, earliest]);
+
   return (
-    <div className="timeline" style={{ height: (last - first) * HOUR_PX }}>
-      {Array.from({ length: last - first + 1 }, (_, i) => first + i).map((h) => (
-        <div key={h} aria-hidden="true">
-          <span className="hour" style={{ top: (h - first) * HOUR_PX }}>{`${h % 12 || 12} ${h < 12 || h === 24 ? "AM" : "PM"}`}</span>
-          <span className="grid-line" style={{ top: (h - first) * HOUR_PX }} />
-        </div>
-      ))}
-      {lanes(items).map((e) => <EventBlock key={e.event_id} e={e} style={place(e)} onOpen={onOpenEvent} />)}
-      {lanes(ghosts).map((g) => (
-        <div key={g.id} className={`ev ghost ${place(g).height < 38 ? "short" : ""}`} style={place(g)}>
-          <span className="t">Proposed: {g.name}</span>
-          <span className="m">{span(g)}</span>
-        </div>
-      ))}
-      {showNow && (
-        <div className="now-line" style={{ top: ((nowMin - first * 60) * HOUR_PX) / 60 }}>
-          <span className="now-tag">NOW</span>
-        </div>
-      )}
+    <div className="timeline-scroll" ref={scroller} tabIndex={0} role="region" aria-label="The day, hour by hour. Scroll for earlier and later.">
+      <div className="timeline" style={{ height: (last - first) * HOUR_PX }}>
+        {Array.from({ length: last - first + 1 }, (_, i) => first + i).map((h) => (
+          <div key={h} aria-hidden="true">
+            <span className="hour" style={{ top: (h - first) * HOUR_PX }}>{`${h % 12 || 12} ${h < 12 || h === 24 ? "AM" : "PM"}`}</span>
+            <span className="grid-line" style={{ top: (h - first) * HOUR_PX }} />
+          </div>
+        ))}
+        {lanes(items).map((e) => <EventBlock key={e.event_id} e={e} style={place(e)} onOpen={onOpenEvent} />)}
+        {lanes(ghosts).map((g) => (
+          <div key={g.id} className={`ev ghost ${place(g).height < 38 ? "short" : ""}`} style={place(g)}>
+            <span className="t">Proposed: {g.name}</span>
+            <span className="m">{span(g)}</span>
+          </div>
+        ))}
+        {showNow && (
+          <div className="now-line" style={{ top: ((nowMin - first * 60) * HOUR_PX) / 60 }}>
+            <span className="now-tag">NOW</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -205,8 +232,11 @@ export function EventDialog({ event, onDelete, onClose }) {
     <Modal title={event.name} color={fixed ? "purple" : colorOf(event.event_id)} onClose={onClose}>
       <p className="mono">{span(event)}</p>
       {event.repeats && <p className="note"><Repeat /> {describeRule(event.recurrence_rule)}</p>}
-      {fixed && <p className="note"><Lock /> Fixed. The AI never suggests moving it.</p>}
-      <button type="button" className="btn orange"
+      {event.import_id ? (
+        <p className="note"><Lock /> From a calendar you imported. Change or delete it there; Steady follows on its own.
+          The AI plans around it and never suggests moving it.</p>
+      ) : fixed && <p className="note"><Lock /> Fixed. The AI never suggests moving it.</p>}
+      {!event.import_id && <button type="button" className="btn orange"
         onClick={() => {
           if (!event.repeats || window.confirm(`Delete "${event.name}" on every day it repeats?`)) {
             onDelete(event.event_id);
@@ -214,7 +244,7 @@ export function EventDialog({ event, onDelete, onClose }) {
           }
         }}>
         <Trash width={18} height={18} /> {event.repeats ? "Delete every week" : "Delete event"}
-      </button>
+      </button>}
     </Modal>
   );
 }

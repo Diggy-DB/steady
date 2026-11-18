@@ -61,3 +61,43 @@ def test_run_scenario_scores_a_run():
     lazy = FakeClient([reply("Probably nothing.")])  # answers without looking
     result = run_scenario(lazy, "fake", scenario)
     assert not result["passed"] and result["failures"] == ["never called get_schedule"]
+
+
+def test_a_crashing_check_is_a_failure_not_the_end_of_the_run():
+    def broken(t):
+        return t.suggestions[0]["proposed_change"]["name"]  # IndexError: there are no suggestions
+
+    scenario = Scenario("tomorrow", "What do I have tomorrow?", [broken, calls("get_schedule")])
+    tuesday = {"start_date": "2026-10-06", "end_date": "2026-10-06"}
+    result = run_scenario(FakeClient([reply(tool_calls=[("get_schedule", tuesday)]), reply("Work 1-5.")]), "fake", scenario)
+    assert not result["passed"] and len(result["failures"]) == 1 and "check crashed" in result["failures"][0]
+
+
+def test_a_run_that_errors_is_recorded_as_failed_but_a_lost_server_stops_everything():
+    import httpx
+    import openai
+
+    from ai.evals import run_scenario_safely
+
+    class Refusing:  # e.g. vLLM refusing a chat longer than its context
+        base_url = "http://fake"
+
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**request):
+                    raise openai.BadRequestError("too long", response=httpx.Response(400, request=httpx.Request("POST", "http://fake")), body=None)
+
+    scenario = Scenario("tomorrow", "What do I have tomorrow?", [calls("get_schedule")])
+    result = run_scenario_safely(Refusing, "fake", scenario)
+    assert not result["passed"] and result["failures"][0].startswith("run crashed: BadRequestError")
+
+    class Gone(Refusing):
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**request):
+                    raise openai.APIConnectionError(request=httpx.Request("POST", "http://fake"))
+
+    with pytest.raises(openai.APIConnectionError):
+        run_scenario_safely(Gone, "fake", scenario)

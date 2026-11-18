@@ -4,9 +4,10 @@ import { addEvent, deleteEvent, loadCommitments, saveProfile } from "../lib/data
 import { PRIORITY_OPTIONS, commitmentToEvent, eventToCommitment } from "../lib/onboarding";
 import { useTheme } from "../lib/theme";
 import { Alert, Avatar, Box, Card, Field, Logo, Skeleton, ThemeToggle } from "../components/ui";
-import { ArrowLeft, Brain, Check, Lock, LogOut, Moon, Plus, Sun } from "../components/ui/icons";
+import { ArrowLeft, Brain, Calendar, Check, Lock, LogOut, Moon, Plus, Sun } from "../components/ui/icons";
 import { CommitmentForm, CommitmentRow, PriorityPicker, TimezoneSelect, WorkTimeChoice } from "../components/profile";
 import MemoryPanel from "../components/MemoryPanel";
+import CalendarApps from "../components/CalendarApps";
 
 // Settings: everything Steady knows about the user. Profile fields save together from the save bar (the same
 // single profile update as before); fixed commitments are calendar rows, added and removed straight away;
@@ -181,6 +182,10 @@ function Settings({ profile, email, onSaved, onCalendarChanged }) {
           <Field label="Anything Steady should know about you?" as="textarea" maxLength={1000} value={form.additional_information}
             onChange={(e) => set("additional_information", e.target.value)}
             hint="For example, what motivates you to study. Used to personalize feedback." />
+        </Card>
+
+        <Card title="Calendar apps" color="blue" icon={<Calendar />} className="slam slam-4" bodyClass="cal-body" id="calendar-apps">
+          <CalendarApps userId={profile.user_id} onCalendarChanged={onCalendarChanged} />
         </Card>
 
         <Card title="Appearance & account" color="green" className="slam slam-4">

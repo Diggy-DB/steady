@@ -15,6 +15,8 @@
     DELETE /memories/{id}               forget one memory
     POST /memories/journal/{id}         learn from a saved journal entry (in the background)
     DELETE /memories/journal/{id}       forget what one journal entry taught
+    POST /calendars                     import a calendar (Google, iCloud, Outlook, ...) from its private .ics address
+    POST /calendars/sync                bring imported calendars up to date (one, all, or only ones not tried lately)
     GET  /health
 
 Two modes, chosen with the STORE environment variable:
@@ -38,7 +40,7 @@ import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -49,7 +51,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from ai import agent, syllabus
+from ai import agent, calendar_import, syllabus
 from ai.agent import run_agent
 from ai.llm import AI_DIR, load_settings, make_client, thinking_off
 from ai.memory import UserMemory, build_user_memory
@@ -512,3 +514,63 @@ def learn_from_journal(journal_id: str, background: BackgroundTasks, ctx: ToolCo
 def forget_journal(journal_id: str, ctx: ToolContext = Depends(context)) -> dict:
     """Called by the frontend after a journal entry is deleted."""
     return {"journal_id": journal_id, "forgotten": require_memory().forget_journal(ctx.user_id, journal_id)}
+
+
+# ---- Imported calendars (calendar_import.py): Google Calendar, iCloud, Outlook, ... through a private .ics address.
+# The website lists and removes imports itself (Supabase, Row Level Security); downloading the other calendar needs a
+# server, since browsers may not read another site's files.
+
+class CalendarImportRequest(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+    name: str = Field(default="", max_length=100)  # empty: the calendar's own name
+
+
+class CalendarSyncRequest(BaseModel):
+    import_id: int | None = None  # one import; None = all of them
+    older_than_minutes: int = Field(default=0, ge=0, le=7 * 24 * 60)  # only imports not tried for this long
+
+
+syncing: set[str] = set()  # users with a calendar import or sync running
+syncing_lock = threading.Lock()
+
+
+def calendar_store(ctx: ToolContext) -> SupabaseStore:
+    if isinstance(ctx.store, FixtureStore):
+        raise HTTPException(400, "Importing a calendar needs a real account (STORE=supabase)")
+    return ctx.store
+
+
+def one_sync_at_a_time(user_id: str) -> bool:
+    with syncing_lock:
+        if user_id in syncing:
+            return False
+        syncing.add(user_id)
+        return True
+
+
+@app.post("/calendars")
+def import_calendar(request: CalendarImportRequest, ctx: ToolContext = Depends(context)) -> dict:
+    store = calendar_store(ctx)
+    if not one_sync_at_a_time(ctx.user_id):
+        raise HTTPException(429, "Your calendars are syncing right now. Try again in a moment.")
+    try:
+        return calendar_import.add_import(store, ctx.user_id, request.url, request.name, ctx.now)
+    except calendar_import.CalendarLinkError as error:
+        raise HTTPException(400, str(error)) from None
+    finally:
+        syncing.discard(ctx.user_id)
+
+
+@app.post("/calendars/sync")
+def sync_calendars(request: CalendarSyncRequest, ctx: ToolContext = Depends(context)) -> list[dict]:
+    store = calendar_store(ctx)
+    if not one_sync_at_a_time(ctx.user_id):  # another tab (or the app opening) is syncing already
+        return []
+    try:
+        older = timedelta(minutes=request.older_than_minutes) if request.older_than_minutes else None
+        results = calendar_import.sync_imports(store, ctx.user_id, ctx.now, request.import_id, older)
+    finally:
+        syncing.discard(ctx.user_id)
+    if request.import_id is not None and not results and not older:
+        raise HTTPException(404, f"no imported calendar {request.import_id}")
+    return results

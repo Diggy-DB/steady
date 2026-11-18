@@ -15,6 +15,12 @@
 .divider { border: none; border-top: 3px dashed var(--line); margin: 6px 0; }
 .signup-cta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
 .signup-cta p { font-weight: 800; }
+/* "or" between the email form and Google */
+.or-line { display: flex; align-items: center; gap: 12px; font-size: 13px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.or-line::before, .or-line::after { content: ""; flex: 1; border-top: 3px dashed var(--line); }
+.google-btn { gap: 12px; }
+.google-btn svg { flex: none; }
+.google-chosen { display: inline-flex; align-items: center; gap: 10px; font-weight: 800; }
 
 .promo { flex: 1 1 400px; padding: 30px; position: relative; display: flex; flex-direction: column; gap: 18px; min-width: 0; overflow: hidden; }
 .promo h2 { font-size: 44px; font-weight: 900; letter-spacing: -0.035em; line-height: .98; max-width: 420px; }

@@ -2,11 +2,12 @@
   "name": "steady-planner-db-tests",
   "private": true,
   "type": "module",
-  "description": "Tests the database migration in a throwaway Postgres (PGlite) that mimics Supabase. No Docker, no live database.",
+  "description": "Tests the database migrations in a throwaway Postgres (PGlite) that mimics Supabase, and the calendar link's .ics file. No Docker, no live database.",
   "scripts": {
-    "test": "node test_migration.mjs ../migrations/*.sql"
+    "test": "node test_migration.mjs ../migrations/*.sql && node --test test_ics.mjs"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "^0.5.10"
+    "@electric-sql/pglite": "^0.5.10",
+    "ical.js": "^2.1.0"
   }
 }

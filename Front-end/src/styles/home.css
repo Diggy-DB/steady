@@ -76,6 +76,10 @@
 .result-row svg { width: 16px; height: 16px; flex: none; }
 
 /* ---- Schedule timeline ---- */
+/* The whole day scrolls inside the card: about 13 hours show at once. */
+.timeline-scroll { max-height: min(600px, 62vh); overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+  padding: 10px 6px 10px 0; border-radius: 8px; }
+.timeline-scroll:focus-visible { outline: 3px solid var(--line); outline-offset: 2px; }
 .timeline { position: relative; margin-left: 52px; border-left: 3px solid var(--line); }
 .timeline .hour { position: absolute; left: -52px; width: 52px; transform: translateY(-50%); font-family: var(--mono); font-size: 11px; font-weight: 700;
   color: var(--muted); text-align: right; padding-right: 8px; }

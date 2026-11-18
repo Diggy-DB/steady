@@ -3,7 +3,8 @@
 # One-time setup (see ai/notes/team_test.md):
 # - Settings > Pages > Source: "GitHub Actions".
 # - Variables VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (the anon key is public by design; never the
-#   service_role key) and VITE_AI_API_URL (the RunPod URL), either on the github-pages environment
+#   service_role key) and VITE_AI_API_URL (the RunPod URL, or a Mac's Tailscale address from
+#   ai/deploy/mac_autostart.sh, e.g. https://steady-ai.<tailnet>.ts.net), either on the github-pages environment
 #   (Settings > Environments > github-pages) or as repository variables (Settings > Secrets and variables).
 # - To publish from a branch other than main: Settings > Environments > github-pages > add the branch.
 # After changing a variable (e.g. a new pod URL), run this again: Actions > Publish website > Run workflow.

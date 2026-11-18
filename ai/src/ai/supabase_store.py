@@ -157,6 +157,42 @@ class SupabaseStore:
         response.raise_for_status()
         return response.json()
 
+    # ---- Imported calendars (calendar_import.py): rows the sync owns, tagged with import_id ----
+
+    def calendar_imports(self, user_id: str) -> list[dict]:
+        return self._get("calendar_imports", [("user_id", f"eq.{user_id}"), ("order", "created_at.asc")])
+
+    def add_calendar_import(self, user_id: str, name: str, url: str) -> dict:
+        [row] = self._write("POST", "calendar_imports", None, {"user_id": user_id, "name": name, "url": url})
+        return row
+
+    def imported_events(self, user_id: str, import_id: int, first_day: date) -> list[dict]:
+        return self._get("calendar_events", [("user_id", f"eq.{user_id}"), ("import_id", f"eq.{import_id}"),
+                                             ("start_date", f"gte.{first_day.isoformat()}")])
+
+    def save_imported_events(self, user_id: str, import_id: int, rows: list[dict]) -> None:
+        """Add or update rows by (import_id, external_id), in a few requests. An update keeps the row's event_id."""
+        extra = {"user_id": user_id, "import_id": import_id, "changeable": False, "created_by": "USER", "recurrence_rule": None}
+        for i in range(0, len(rows), 500):
+            response = self.client.post(
+                "/calendar_events", params=[("on_conflict", "import_id,external_id")],
+                json=[{**extra, **row} for row in rows[i:i + 500]],
+                headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+            )
+            response.raise_for_status()
+
+    def delete_imported_events(self, user_id: str, import_id: int, event_ids: list[int]) -> None:
+        for i in range(0, len(event_ids), 200):
+            ids = ",".join(str(int(e)) for e in event_ids[i:i + 200])
+            self._delete("calendar_events", [("user_id", f"eq.{user_id}"), ("import_id", f"eq.{import_id}"),
+                                             ("event_id", f"in.({ids})")])
+
+    def finish_calendar_sync(self, user_id: str, import_id: int, when: datetime, error: str | None = None) -> None:
+        body = {"last_checked_at": when.isoformat(), "last_error": error}
+        if error is None:
+            body["last_synced_at"] = when.isoformat()
+        self._write("PATCH", "calendar_imports", [("user_id", f"eq.{user_id}"), ("import_id", f"eq.{import_id}")], body)
+
     def set_status(self, suggestion_id: str, status: str) -> None:
         if not self._write("PATCH", "ai_suggestions", [("suggestion_id", f"eq.{suggestion_id}")], {"status": status}):
             raise LookupError(f"suggestion {suggestion_id} wasn't updated")

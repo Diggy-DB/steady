@@ -104,6 +104,10 @@ model_up || { echo "The model isn't up after 30 minutes. It keeps loading in the
 echo "Model ready."
 
 cd "$AI"
+# How many chats and syllabus imports the API works on at once; the rest wait their turn. The model server takes
+# 16 requests at a time, so 16 chats use it fully; imports send up to 12 page images each, so fewer of them.
+# Sized for a demo with ~20 people (the defaults in server.py, 8 and 2, made the 20th syllabus wait ~10 minutes).
+export CHAT_WORKERS="${CHAT_WORKERS:-16}" IMPORT_WORKERS="${IMPORT_WORKERS:-4}"
 # The API runs in a loop: if it ever stops, it's back 3 seconds later (the website said "Can't reach the AI
 # server" until someone restarted it by hand). Its own session, so closing the terminal doesn't stop it.
 echo "=== API started $(date) ===" >> /workspace/logs/app.log

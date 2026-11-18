@@ -36,10 +36,23 @@ Browser (Front-end/, React)
    cd Front-end && npm install && npm run dev      # http://localhost:5173
    ```
 
+### The AI on a Mac, for the website on GitHub Pages
+
+The website (https://diggy-db.github.io/steady/) and its data (Supabase) work around the clock. The chat, daily
+overview and calendar syncing can run on a Mac whenever it's on and awake, from any network:
+
+```bash
+OLLAMA_MODELS=<your models folder> ai/deploy/mac_autostart.sh install   # once; also: status | restart | uninstall
+```
+
+It starts Ollama, the AI service (only on 127.0.0.1) and Tailscale at every login, and Tailscale Funnel gives the
+AI a permanent https address (`https://steady-ai.<tailnet>.ts.net`). Put that address in the GitHub variable
+`VITE_AI_API_URL` and publish the site again. While the Mac is off, the site works without the AI.
+
 ## Tests
 
 ```bash
 cd ai && uv run pytest                    # AI service and API (no model or database needed)
-cd supabase/tests && npm install && npm test   # the database schema and its security rules
+cd supabase/tests && npm install && npm test   # the database schema, its security rules and the calendar link's .ics file
 cd Front-end && npm run build && npm run lint
 ```

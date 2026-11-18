@@ -20,6 +20,7 @@
 #
 # Settings (environment variables, defaults in brackets): TASKS [400] MINUTES [60] SAMPLES [4] WORKERS [16]
 # START [1000] EVAL_RUNS [3] EVAL_WORKERS [8] SYLLABUS_RUNS [1] TRAIN_ARGS [""], e.g. TRAIN_ARGS="--epochs 3".
+# Round 2 (Nov 14): START=5000 TRAIN_ARGS="--easy-keep 0.5", with round 1's examples in the bundle's prior-data/.
 set -euo pipefail
 
 TASKS="${TASKS:-400}"            # at most this many practice tasks...
@@ -42,7 +43,10 @@ PORT=18001                       # inside the pod only (8001 is RunPod's nginx)
 URL="http://127.0.0.1:$PORT/v1"
 PEFT=peft==0.21.2                # the versions tests/test_train_merge.py ran with
 FLA=flash-linear-attention==0.6.0
-export HF_HOME="$W/hf" PIP_BREAK_SYSTEM_PACKAGES=1 UV_LINK_MODE=copy
+WANDB=wandb==0.31.0              # training logs to W&B when the pod is logged in (uvx wandb login); else it skips it
+# uv links installed packages to its download folder when both are on one disk (no second copy: on a pod with no
+# volume, copies of vLLM's and the training's packages took ~16 GB of a 50 GB disk); across disks it copies anyway.
+export HF_HOME="$W/hf" PIP_BREAK_SYSTEM_PACKAGES=1
 mkdir -p "$OUT" "$W/logs"
 cd "$AI"
 
@@ -134,7 +138,7 @@ fi
 uv sync -q --frozen || fail "installing the Steady code"
 # Training uses the same torch version as vLLM (a build that's known to work with this pod's GPU driver).
 TORCH="torch==$("$VENV/bin/python" -c "import torch; print(torch.__version__.split('+')[0])")"
-TRAIN_WITH=(--with "$TORCH" --with "$PEFT" --with "$FLA")
+TRAIN_WITH=(--with "$TORCH" --with "$PEFT" --with "$FLA" --with "$WANDB")
 uv run -q --frozen "${TRAIN_WITH[@]}" python -c "import torch, peft, fla; assert torch.cuda.is_available(), 'no GPU'" \
   || fail "installing the training libraries"
 echo "vLLM $("$VENV/bin/python" -c "import vllm; print(vllm.__version__)"), $TORCH, $PEFT, $FLA"
@@ -171,7 +175,9 @@ if [ ! -f "$MERGED/steady_merge.json" ]; then
   free_gpu
   if [ ! -f "$OUT/lora/adapter_config.json" ]; then
     # shellcheck disable=SC2086  # TRAIN_ARGS is meant to split into separate arguments
-    uv run --frozen "${TRAIN_WITH[@]}" scripts/train_lora.py --data "$OUT/data/*.jsonl" --out "$OUT/lora" $TRAIN_ARGS \
+    # This session's examples plus earlier rounds' (prior-data/, put in the bundle by make_pod_bundle.sh PRIOR_DATA=...).
+    uv run --frozen "${TRAIN_WITH[@]}" scripts/train_lora.py --data "$OUT/data/*.jsonl" "$AI/prior-data/*.jsonl" \
+      --out "$OUT/lora" $TRAIN_ARGS \
       2>&1 | tee "$OUT/train.txt" || fail "fine-tuning ($OUT/train.txt)"
     [ -f "$OUT/lora/adapter_config.json" ] || fail "fine-tuning: no adapter was saved ($OUT/train.txt)"
   fi

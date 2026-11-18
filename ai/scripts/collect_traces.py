@@ -35,7 +35,7 @@ from datetime import datetime
 import openai
 
 from ai.agent import is_reminder, offered_tools
-from ai.evals import run_scenario
+from ai.evals import run_scenario_safely
 from ai.llm import AI_DIR, load_settings, make_client
 from ai.synth import make_task
 
@@ -96,7 +96,7 @@ def try_task(client, model: str, seed: int, samples: int, deadline: float = 0) -
     if deadline and time.time() > deadline:
         return None
     task = make_task(seed)
-    tries = [run_scenario(client, model, task, log_path=COLLECT_LOG) for _ in range(samples)]
+    tries = [run_scenario_safely(client, model, task, log_path=COLLECT_LOG) for _ in range(samples)]
     return task, tries
 
 

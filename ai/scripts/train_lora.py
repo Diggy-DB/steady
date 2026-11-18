@@ -19,6 +19,10 @@ times slower.
     uv run --with torch --with peft==0.21.2 --with "flash-linear-attention[cuda]==0.6.0" scripts/train_lora.py
     uv run scripts/train_lora.py --check                                               # only count, any computer
     uv run --with torch --with peft==0.21.2 scripts/train_lora.py --base <tiny model> --max-steps 2   # a quick test
+
+Weights & Biases: when `wandb` is installed and logged in (`wandb login`), every update's loss, learning rate,
+gradient size, speed and how much the weights have changed go to the "steady-planner" project; at the end, the
+change per layer. Not logged in, or W&B fails: training goes on without it. --no-wandb turns it off.
 """
 
 import argparse
@@ -26,8 +30,10 @@ import glob
 import json
 import math
 import random
+import re
 import time
-from collections import Counter
+from collections import Counter, defaultdict
+from datetime import datetime
 from pathlib import Path
 
 AI_DIR = Path(__file__).resolve().parents[1]
@@ -45,10 +51,11 @@ THINK_START = "<think>\n"
 TURN_END = "<|im_end|>"
 
 
-def load_examples(pattern: str, skip_reminded: bool) -> tuple[list[dict], int]:
-    """Read every example from the files matching `pattern`. Returns (examples, how many were skipped)."""
+def load_examples(patterns: str | list[str], skip_reminded: bool) -> tuple[list[dict], int]:
+    """Read every example from the files matching the pattern(s). Returns (examples, how many were skipped)."""
     examples, skipped = [], 0
-    for path in sorted(glob.glob(pattern)):
+    paths = sorted({path for pattern in ([patterns] if isinstance(patterns, str) else patterns) for path in glob.glob(pattern)})
+    for path in paths:
         for line in Path(path).read_text(encoding="utf-8").splitlines():
             example = json.loads(line)
             if skip_reminded and example.get("meta", {}).get("reminded"):
@@ -56,6 +63,17 @@ def load_examples(pattern: str, skip_reminded: bool) -> tuple[list[dict], int]:
                 continue
             examples.append(example)
     return examples, skipped
+
+
+def thin_easy(examples: list[dict], keep: float, seed: int = 0) -> tuple[list[dict], int]:
+    """Keep only `keep` (0-1) of the examples from tasks the model passed on every try: they teach it little (82% of
+    round 1's data). Examples from tasks it sometimes failed are all kept. Returns (examples, how many were dropped)."""
+    if keep >= 1:
+        return examples, 0
+    rng = random.Random(seed)
+    easy = lambda e: e.get("meta", {}).get("passed_tries", 0) >= e.get("meta", {}).get("tries", 1)  # noqa: E731
+    kept = [e for e in examples if not easy(e) or rng.random() < keep]
+    return kept, len(examples) - len(kept)
 
 
 def assistant_spans(text: str) -> list[tuple[int, int]]:
@@ -152,6 +170,73 @@ def learning_rate_factor(step: int, warmup: int, total: int) -> float:
     return 0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(progress, 1.0)))
 
 
+# Which part of a layer a LoRA'd module belongs to, from its name (e.g. "model.layers.3.linear_attn.in_proj_qkv").
+PARTS = {"self_attn": "attention", "linear_attn": "linear_attention", "mlp": "feed_forward"}
+
+
+def lora_modules(model) -> list[tuple[str, object]]:
+    """The modules that got LoRA matrices, with their names."""
+    return [(name, m) for name, m in model.named_modules() if hasattr(m, "lora_A") and "default" in getattr(m, "lora_A", {})]
+
+
+def part_of(name: str) -> str:
+    return next((part for key, part in PARTS.items() if f".{key}." in name), "other")
+
+
+def layer_of(name: str) -> int:
+    found = re.search(r"\.layers\.(\d+)\.", name)
+    return int(found[1]) if found else -1
+
+
+def weight_change(modules: list[tuple[str, object]], base_sq: dict[str, float]) -> tuple[dict, dict, list]:
+    """How much training has changed the weights so far, relative to their size: ||ΔW|| / ||W||, where
+    ΔW = scale·B·A is what LoRA adds. Returns (by part of the model and "all", by layer, per module).
+
+    ||B·A||² = trace((BᵀB)(AAᵀ)) needs only rank × rank matrices, so this is cheap enough for every update
+    (forming B·A itself would be up to 9216 × 2560 numbers for each of 248 modules)."""
+    import torch
+
+    change, size = defaultdict(float), defaultdict(float)
+    by_layer_change, by_layer_size, per_module = defaultdict(float), defaultdict(float), []
+    with torch.no_grad():
+        for name, m in modules:
+            a, b = m.lora_A["default"].weight.float(), m.lora_B["default"].weight.float()
+            sq = max(0.0, float(((b.T @ b) * (a @ a.T)).sum())) * m.scaling["default"] ** 2
+            for key in (part_of(name), "all"):
+                change[key] += sq
+                size[key] += base_sq[name]
+            by_layer_change[layer_of(name)] += sq
+            by_layer_size[layer_of(name)] += base_sq[name]
+            per_module.append(math.sqrt(sq / base_sq[name]))
+    by_part = {k: math.sqrt(change[k] / size[k]) for k in change}
+    by_layer = {k: math.sqrt(by_layer_change[k] / by_layer_size[k]) for k in sorted(by_layer_change)}
+    return by_part, by_layer, per_module
+
+
+def start_wandb(args, stats: Counter, n_examples: int, total_steps: int):
+    """A W&B run, or None when W&B isn't installed, isn't logged in, or fails: training never depends on it."""
+    if args.no_wandb:
+        return None
+    try:
+        import wandb
+    except ImportError:
+        print("W&B isn't installed, so nothing is logged there (uv pip install wandb, then wandb login).", flush=True)
+        return None
+    try:
+        config = {"base": args.base, "rank": args.rank, "lora_alpha": 2 * args.rank, "learning_rate": args.lr,
+                  "epochs": args.epochs, "accum": args.accum, "updates": total_steps, "max_length": args.max_length,
+                  "examples": n_examples, "skip_reminded": args.skip_reminded, "target_modules": TARGET_MODULES,
+                  "tokens": stats["tokens"], "trained_tokens": stats["trained tokens"],
+                  "examples_by_type": {k[5:]: v for k, v in stats.items() if k.startswith("type ")}}
+        run = wandb.init(project=args.wandb_project, config=config, dir=str(Path(args.out).parent),
+                         name=f"lora-r{args.rank}-{n_examples}ex-{datetime.now():%m%d-%H%M}")
+        print(f"Logging to W&B: {run.url}", flush=True)
+        return run
+    except Exception as error:  # noqa: BLE001 (not logged in, no network, ...)
+        print(f"W&B didn't start ({error}); training goes on without it.", flush=True)
+        return None
+
+
 def train(args, data: list[tuple], stats: Counter) -> None:
     import torch
     from peft import LoraConfig, get_peft_model
@@ -182,6 +267,9 @@ def train(args, data: list[tuple], stats: Counter) -> None:
     model = get_peft_model(model, config)
     model.print_trainable_parameters()
     inner = model.get_base_model()  # the original model, now with LoRA matrices inside its layers
+    modules = lora_modules(model)
+    with torch.no_grad():  # ||W||² of each original weight, for "how much has it changed" (they stay frozen)
+        base_sq = {name: float(m.base_layer.weight.float().pow(2).sum()) for name, m in modules}
 
     trainable = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable, lr=args.lr, weight_decay=0.0)
@@ -193,6 +281,7 @@ def train(args, data: list[tuple], stats: Counter) -> None:
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda s: learning_rate_factor(s, warmup, total_steps))
     print(f"{len(data)} conversations x {args.epochs} epochs = {total_steps} updates "
           f"(each from {args.accum} conversations)", flush=True)
+    run = start_wandb(args, stats, len(data), total_steps)
 
     model.train()
     history, started, step, done, window_loss, window_tokens = [], time.time(), 0, 0, [], 0
@@ -207,7 +296,7 @@ def train(args, data: list[tuple], stats: Counter) -> None:
         window_tokens += len(ids)
 
         if n % args.accum == 0 or n == len(order):
-            torch.nn.utils.clip_grad_norm_(trainable, 1.0)
+            grad_norm = float(torch.nn.utils.clip_grad_norm_(trainable, 1.0))
             optimizer.step()
             scheduler.step()
             optimizer.zero_grad(set_to_none=True)
@@ -218,6 +307,15 @@ def train(args, data: list[tuple], stats: Counter) -> None:
             print(f"update {step}/{total_steps}  loss {average:.3f}  lr {scheduler.get_last_lr()[0]:.1e}  "
                   f"{window_tokens / max(elapsed - done, 1e-6):.0f} tokens/s  "
                   f"{elapsed / 60:.1f} min, about {elapsed / step * (total_steps - step) / 60:.0f} min left", flush=True)
+            if run:
+                try:
+                    by_part, _, _ = weight_change(modules, base_sq)
+                    run.log({"train/loss": average, "train/learning_rate": scheduler.get_last_lr()[0],
+                             "train/grad_norm": grad_norm, "train/tokens_per_s": window_tokens / max(elapsed - done, 1e-6),
+                             "train/epoch": n / len(data), **{f"weights/change_{k}": v for k, v in by_part.items()}},
+                            step=step)
+                except Exception as error:  # noqa: BLE001 (never stop training for a chart)
+                    print(f"W&B logging failed ({error}); continuing.", flush=True)
             window_loss, window_tokens, done = [], 0, elapsed
             if step >= total_steps:
                 break
@@ -232,13 +330,31 @@ def train(args, data: list[tuple], stats: Counter) -> None:
         "peak_gpu_gb": round(torch.cuda.max_memory_allocated() / 1e9, 1) if device == "cuda" else None,
         "data": {k: v for k, v in stats.items()},
     }
+    by_part, by_layer, per_module = weight_change(modules, base_sq)
+    # Layer numbers as text: W&B's summary (like JSON) only takes text keys; ints crashed the final W&B step on Nov 14.
+    summary["weight_change"] = {"by_part": by_part, "by_layer": {str(k): v for k, v in by_layer.items()}}
     (out / "train_summary.json").write_text(json.dumps(summary, indent=2))
     print(f"Saved the adapter to {out} ({summary['minutes']} min, loss {history[0]} -> {history[-1]})")
+    print("weights changed by (||ΔW|| / ||W||): " + ", ".join(f"{k} {v:.4f}" for k, v in sorted(by_part.items())))
+    if run:
+        try:
+            import wandb
+
+            table = wandb.Table(data=[[layer, change] for layer, change in by_layer.items()], columns=["layer", "change"])
+            run.log({"weights/change_by_layer": wandb.plot.bar(table, "layer", "change", title="How much each layer changed"),
+                     "weights/change_per_module": wandb.Histogram(per_module)})
+            run.summary.update({k: v for k, v in summary.items() if k not in ("loss_per_update", "data")})
+            run.finish()
+        except Exception as error:  # noqa: BLE001
+            print(f"W&B final logging failed ({error}).", flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fine-tune the model on collected examples with LoRA.")
-    parser.add_argument("--data", default=str(AI_DIR / "data" / "*.jsonl"), help="files with training examples")
+    parser.add_argument("--data", nargs="+", default=[str(AI_DIR / "data" / "*.jsonl")],
+                        help="files with training examples (one or more patterns, e.g. this round's and earlier rounds')")
+    parser.add_argument("--easy-keep", type=float, default=1.0,
+                        help="keep this share (0-1) of the examples from tasks the model passed on every try")
     parser.add_argument("--out", default=str(AI_DIR / "out" / "lora"), help="where to save the adapter")
     parser.add_argument("--base", default=BASE_MODEL, help="the model to fine-tune")
     parser.add_argument("--epochs", type=int, default=2, help="passes over the data")
@@ -250,6 +366,8 @@ def main() -> None:
     parser.add_argument("--max-steps", type=int, default=0, help="stop after this many updates (for a quick test)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--check", action="store_true", help="only tokenize and print statistics")
+    parser.add_argument("--wandb-project", default="steady-planner", help="the W&B project to log to")
+    parser.add_argument("--no-wandb", action="store_true", help="don't log to W&B even if it's set up")
     args = parser.parse_args()
 
     from transformers import AutoTokenizer
@@ -257,6 +375,9 @@ def main() -> None:
     examples, skipped = load_examples(args.data, args.skip_reminded)
     if not examples:
         raise SystemExit(f"No examples in {args.data}. Collect some first: scripts/collect_traces.py")
+    examples, dropped = thin_easy(examples, args.easy_keep, args.seed)
+    if dropped:
+        print(f"Left out {dropped} examples from tasks passed on every try (--easy-keep {args.easy_keep})")
     tokenizer = AutoTokenizer.from_pretrained(args.base)
     data, stats = prepare(tokenizer, examples, args.max_length)
     print(f"{len(examples) + skipped} examples: {len(data)} used, {stats['too long']} longer than "

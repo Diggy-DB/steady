@@ -23,8 +23,9 @@ export async function loadMonth(year, month) {
   const first = dateString(year, month, 1);
   const last = dateString(year, month, new Date(year, month + 1, 0).getDate());
   const [events, repeating, tasks, journals] = await Promise.all([
+    // (by end_date: an event from the night before the 1st that runs past midnight shows on the 1st too)
     supabase.from("calendar_events").select("*").is("recurrence_rule", null)
-      .gte("start_date", first).lte("start_date", last).order("start_date").order("start_time"),
+      .gte("end_date", first).lte("start_date", last).order("start_date").order("start_time"),
     // Weekly classes and other repeating events that started by the end of the month: shown on each day they happen.
     supabase.from("calendar_events").select("*").not("recurrence_rule", "is", null).lte("start_date", last),
     supabase.from("tasks").select("*").gte("date", first).lte("date", last).order("date"),
@@ -101,4 +102,45 @@ export async function loadCommitments() {
     await supabase.from("calendar_events").select("*").eq("changeable", false).not("recurrence_rule", "is", null)
       .order("start_time"),
   );
+}
+
+
+// ---- The calendar link (calendar_feeds): one secret link per user for Apple Calendar, Google Calendar and
+// Outlook. The database makes the token; the Edge Function calendar-feed serves the .ics file.
+
+export const calendarLinkUrl = (token) =>
+  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/calendar-feed?token=${token}`;
+
+export async function loadCalendarLink() {
+  const { data, error } = await supabase.from("calendar_feeds").select("token, created_at").maybeSingle();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function createCalendarLink(userId) {
+  const { data, error } = await supabase.from("calendar_feeds").insert({ user_id: userId }).select("token, created_at").single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function deleteCalendarLink(userId) {
+  const { error } = await supabase.from("calendar_feeds").delete().eq("user_id", userId);
+  if (error) throw new Error(error.message);
+}
+
+
+// ---- Imported calendars (calendar_imports): Google Calendar, iCloud, Outlook, ... The AI server downloads them and
+// saves their events (ai.importCalendar / ai.syncCalendars); listing and removing go straight to Supabase. The secret
+// address isn't read back: the page doesn't need it.
+
+export async function loadCalendarImports() {
+  return check(
+    await supabase.from("calendar_imports").select("import_id, name, last_checked_at, last_synced_at, last_error, created_at")
+      .order("created_at"),
+  );
+}
+
+// Removes the import and, in the database, every event it brought in. Nothing changes in the other calendar.
+export async function deleteCalendarImport(importId) {
+  check(await supabase.from("calendar_imports").delete().eq("import_id", importId));
 }

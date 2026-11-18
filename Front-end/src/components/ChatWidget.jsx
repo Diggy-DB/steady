@@ -3,6 +3,10 @@ import { ai } from "../lib/ai";
 import SuggestionCard from "./home/SuggestionCard";
 import { Chat, Paperclip, Send, Sparkle, X } from "./ui/icons";
 
+// Message ids, unique for this page. (Not crypto.randomUUID: browsers only offer it on https and localhost, and the
+// app also runs from a plain http address on the local network.)
+let nextMessageId = 1;
+
 // Chat with the AI service. Its replies can come with suggestions; each one is a card with
 // "Yes" / "Not now". Only those buttons change the calendar or the journal, never the chat text.
 // The paperclip sends a syllabus (PDF or photo): the AI reads it and suggests every deadline,
@@ -43,7 +47,7 @@ function ChatWidget({ events = [], onCalendarChanged, request, onSuggestionsMade
   const [acceptingAll, setAcceptingAll] = useState(null); // id of the message whose cards are being accepted
   const [messages, setMessages] = useState([
     {
-      id: 1,
+      id: 0, // the greeting; new messages count up from 1
       sender: "AI",
       text: "Hi! Ask me anything about your schedule, or tap the paperclip to send a syllabus (PDF or photo) and I'll suggest its deadlines, exams and classes.",
       suggestions: [],
@@ -63,7 +67,7 @@ function ChatWidget({ events = [], onCalendarChanged, request, onSuggestionsMade
 
   // `error`: a "Sorry, something went wrong" message, which isn't sent back to the AI as part of the chat.
   const addMessage = (sender, text, suggestions = [], error = false) =>
-    setMessages((all) => [...all, { id: crypto.randomUUID(), sender, text, suggestions, error }]);
+    setMessages((all) => [...all, { id: nextMessageId++, sender, text, suggestions, error }]);
 
   // A message from elsewhere in the app (the overview's "Ask Steady"): open the chat and send it.
   const lastRequest = useRef(null);

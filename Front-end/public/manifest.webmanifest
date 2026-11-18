@@ -1,0 +1,16 @@
+{
+  "name": "Steady Planner",
+  "short_name": "Steady",
+  "description": "Your calendar, tasks and journal, with an AI that suggests and you decide.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF5DC",
+  "theme_color": "#FFF5DC",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

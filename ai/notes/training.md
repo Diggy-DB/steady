@@ -146,6 +146,78 @@ environment variables, e.g. `MINUTES=30 EVAL_RUNS=2 TRAIN_ARGS="--skip-reminded"
 p < 0.05, nothing important broke (deletes, fixed events, injection), and the syllabus import
 didn't get worse. Fewer tokens and fewer reminders are a bonus.
 
+## Round 1 results (Nov 14, 2026, RTX 4090)
+
+384 examples from 400 practice tasks (the model passed 90% of its 1,600 tries), 2 epochs = 96 updates, 19 minutes.
+Loss 0.17 → 0.13, mostly at the start of the second pass. The weights moved by 0.43% of their size (attention
+0.38%, linear attention 0.38%, feed-forward 0.49%; layers 15-18 the most). Peak GPU memory 16.5 GB.
+Logged to W&B (project steady-planner, run lora-r16-384ex-1114-0207). Files: `evals/2026-11-14-*`; the adapter
+and the training data in `out/lora-selfrft-round1/` (not in git).
+
+Both models on vLLM, the full suite (296 cases x 3 runs):
+
+| | original | round 1 |
+|---|---|---|
+| runs passed | 701/888 (79%) | 707/888 (80%) |
+| cases right in most runs | 236 | 239 (20 fixed, 17 broken: p = 0.74, could be luck) |
+| tokens per run | 1,239 | 1,071 (-14%; fewer in 229 of 296 cases, p < 1e-20) |
+| seconds per run | 23.2 | 19.0 (-18%) |
+| reminders needed | 90 | 65 (-28%) |
+| gave up | 33 | 33 |
+| syllabus import (26 syllabi) | 91.1% of dates, classes 36/36 | the same |
+
+So round 1 made the model **faster and more direct without making it more accurate**: by the rule above, not
+yet a switch. Better: conflict 70 → 80%, plan 31 → 39%, journal 87 → 94%, injection 77 → 83%. Worse: tight
+52 → 43% ("not enough time": saying it doesn't fit), time 80 → 73% ("8 AM is already over"), and two "that
+event isn't yours / doesn't exist" cases that now search until they give up. **None of those three behaviors
+has a practice task type**, while every practice task rewards proposing something: round 2 should add them
+(not enough time, an event that doesn't exist, a time that's already over) and favor tasks the model passes
+only 1-3 of 4 tries, which teach more than ones it always passes.
+
+## Round 2 setup (Nov 14)
+
+- **Three new practice types** in `synth.py` (wording and names differ from the eval cases):
+  `not_enough` (more hours today than are free: say so, suggest only what fits today), `missing_event` (an event
+  the student doesn't have, or another person's event by id: say it isn't there, change nothing) and `time_over`
+  (a time earlier today, or "tonight" at 11 PM: notice it, suggest nothing in the past).
+- **Weighted task mix**: the new types and the two weakest from round 1 (multi_goal, weekly_goal) come up twice as
+  often, conflict and new_task 1.5 times. In 400 tasks: about 90 of the new types, 41 multi_goal, 30 weekly_goal.
+- **Fewer easy examples**: `train_lora.py --easy-keep 0.5` keeps half of the examples from tasks the model passed
+  on every try and all the others.
+- **More data**: round 1's 384 examples go along (`PRIOR_DATA=... make_pod_bundle.sh` puts them in the bundle's
+  `prior-data/`; the session trains on both). Training still starts from the original model; the
+  hyperparameters are unchanged, so the difference from round 1 is the data.
+- Run: `START=5000 TRAIN_ARGS="--easy-keep 0.5" nohup bash steady/ai/deploy/runpod_train.sh > session.log 2>&1 &`
+  (new seeds, so no task repeats round 1's).
+
+## Round 2 results (Nov 14, 2026)
+
+454 examples (half of the always-passed ones left out; 17 from not_enough, where the model was right in only 23 of
+136 tries), 114 updates, 21.7 minutes, loss 0.177 → 0.116, weights moved 0.46%. W&B run lora-r16-454ex-1114-0400.
+Files: `evals/2026-11-14-*run2*`, `*round2*`; adapter and data in `out/lora-selfrft-round2/`.
+
+The original model was evaluated in both sessions and scored 79% and 78%: **a 1-point difference between two runs of
+the same model is noise**, so the comparison below pools both (6 runs per case):
+
+| | original (6 runs) | round 1 | round 2 |
+|---|---|---|---|
+| runs passed | 78.3% | 79.6% | 79.4% |
+| cases better / worse than original | | 59 / 46 (p = 0.24) | 55 / 44 (p = 0.32) |
+| tokens per run | 1,254 | 1,071 | 1,086 |
+| seconds per run | 24.3 | 19.0 | 19.2 |
+| reminders needed | 9.4% | 7.3% | 6.8% |
+| gave up | 3.4% | 3.7% | 2.3% |
+| syllabus import (same session's original) | | 91.1% (91.1%) | 94.6% (90.9%), 19 made up (30) |
+
+By category, round 2 against the original: unclear 77 → 85%, conflict 75 → 85%, plan 32 → 39%, journal 89 → 94%;
+the round-1 regressions on "that event isn't yours" and "8 AM is already over" are gone. Still worse: tight
+44 → 35% (saying the hours don't fit today); 17 examples weren't enough, because the model almost never does it
+right on its own, and self-training can only reinforce what the model already does sometimes.
+
+**Accuracy: no significant change in either round. Speed: about 21% faster, with fewer reminders and (round 2)
+fewer give-ups.** Next for "tight": a harness fix (find_free_slots reporting the total free time, so the model
+doesn't have to add it up) or a stronger teacher model for those examples.
+
 ## Caveats
 
 - The teacher is the model itself: this repeats its best behavior, it doesn't add new skills.

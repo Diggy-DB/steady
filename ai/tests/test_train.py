@@ -6,6 +6,7 @@ The loss test needs PyTorch, which isn't a project dependency. Run it with:
 
 import importlib.util
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -78,3 +79,60 @@ def test_chunked_loss_equals_the_usual_loss():
     hidden = model.model(input_ids=input_ids).last_hidden_state
     chunked = train_lora.chunked_loss(model.lm_head, hidden, labels, chunk=37)  # an odd size, to test the edges
     assert torch.allclose(usual, chunked, atol=1e-5)
+
+
+def test_weight_change_matches_the_full_matrices():
+    """The cheap ||B·A|| (rank × rank only) equals forming scale·B·A, per part of the model and overall."""
+    torch = pytest.importorskip("torch")
+    peft = pytest.importorskip("peft")
+
+    class Layer(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.self_attn = torch.nn.Module()
+            self.self_attn.q_proj = torch.nn.Linear(12, 20, bias=False)
+            self.mlp = torch.nn.Module()
+            self.mlp.up_proj = torch.nn.Linear(12, 30, bias=False)
+
+    class Tiny(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = torch.nn.Module()
+            self.model.layers = torch.nn.ModuleList([Layer(), Layer()])
+
+    torch.manual_seed(0)
+    model = peft.get_peft_model(Tiny(), peft.LoraConfig(r=4, lora_alpha=8, target_modules=["q_proj", "up_proj"]))
+    modules = train_lora.lora_modules(model)
+    assert len(modules) == 4
+    for _, m in modules:
+        torch.nn.init.normal_(m.lora_B["default"].weight)  # LoRA starts with B = 0; pretend it has trained
+    base_sq = {name: float(m.base_layer.weight.pow(2).sum()) for name, m in modules}
+    by_part, by_layer, per_module = train_lora.weight_change(modules, base_sq)
+
+    with torch.no_grad():
+        full = {name: m.scaling["default"] * m.lora_B["default"].weight @ m.lora_A["default"].weight for name, m in modules}
+    for part in ("attention", "feed_forward"):
+        names = [n for n in full if train_lora.part_of(n) == part]
+        expected = math.sqrt(sum(float(full[n].pow(2).sum()) for n in names) / sum(base_sq[n] for n in names))
+        assert by_part[part] == pytest.approx(expected, rel=1e-4)
+    expected_all = math.sqrt(sum(float(d.pow(2).sum()) for d in full.values()) / sum(base_sq.values()))
+    assert by_part["all"] == pytest.approx(expected_all, rel=1e-4)
+    assert set(by_layer) == {0, 1} and len(per_module) == 4
+
+
+
+def test_thin_easy_keeps_every_hard_example_and_some_easy_ones():
+    easy = [{"meta": {"passed_tries": 4, "tries": 4}} for _ in range(200)]
+    hard = [{"meta": {"passed_tries": n, "tries": 4}} for n in (1, 2, 3) for _ in range(10)]
+    kept, dropped = train_lora.thin_easy(easy + hard, keep=0.5)
+    assert all(h in kept for h in hard) and 70 < len(kept) - len(hard) < 130 and dropped == 230 - len(kept)
+    assert train_lora.thin_easy(easy, keep=1.0) == (easy, 0)
+
+
+def test_load_examples_takes_several_patterns(tmp_path):
+    (tmp_path / "a").mkdir(), (tmp_path / "b").mkdir()
+    (tmp_path / "a" / "x.jsonl").write_text('{"messages": []}\n{"messages": []}\n')
+    (tmp_path / "b" / "y.jsonl").write_text('{"messages": []}\n')
+    found, _ = train_lora.load_examples([str(tmp_path / "a" / "*.jsonl"), str(tmp_path / "b" / "*.jsonl"),
+                                         str(tmp_path / "none" / "*.jsonl")], skip_reminded=False)
+    assert len(found) == 3

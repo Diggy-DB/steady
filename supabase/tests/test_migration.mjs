@@ -75,9 +75,13 @@ const db = new PGlite();
 await db.exec(SUPABASE_LIKE + DRAFTS);
 await db.exec(MIGRATION);
 const tables = (await db.query(`select string_agg(tablename, ', ' order by tablename) as t from pg_tables where schemaname = 'public'`)).rows[0].t;
-const planned = process.argv.length > 5  // the fourth migration adds daily_overviews
-  ? "activity_log, ai_suggestions, calendar_events, daily_overviews, journals, tasks, users"
-  : "activity_log, ai_suggestions, calendar_events, journals, tasks, users";
+const planned = process.argv.length > 8  // the seventh migration adds calendar_imports
+  ? "activity_log, ai_suggestions, calendar_events, calendar_feeds, calendar_imports, daily_overviews, journals, tasks, users"
+  : process.argv.length > 7  // the sixth migration adds calendar_feeds
+  ? "activity_log, ai_suggestions, calendar_events, calendar_feeds, daily_overviews, journals, tasks, users"
+  : process.argv.length > 5  // the fourth migration adds daily_overviews
+    ? "activity_log, ai_suggestions, calendar_events, daily_overviews, journals, tasks, users"
+    : "activity_log, ai_suggestions, calendar_events, journals, tasks, users";
 check("drafts replaced by the planned tables", tables === planned, tables);
 
 // Sign-up creates the profile. Insert as Supabase Auth's own role, not as a superuser.
@@ -201,6 +205,90 @@ if (process.argv.length > 3) {
 await db.exec(`set role anon`);
 check("signed-out visitors can't read events", await fails(db.query(`select * from public.calendar_events`)));
 await db.exec(`reset role`);
+
+// Google sign-in and the calendar link (sixth migration).
+if (process.argv.length > 7) {
+  const C = "33333333-3333-3333-3333-333333333333";
+  const D = "44444444-4444-4444-4444-444444444444";
+  await db.exec(`set role supabase_auth_admin`);
+  await db.exec(`insert into auth.users (id, email, raw_user_meta_data) values
+    ('${C}', 'delger@gmail.com', '{"full_name": "Delger Byambasukh", "given_name": "Delger", "family_name": "Byambasukh"}'),
+    ('${D}', 'chirant@gmail.com', '{"name": "Chirant Rao Patel"}')`);
+  await db.exec(`reset role`);
+  const names = Object.fromEntries((await db.query(`select user_id, first_name, last_name from public.users where user_id in ('${C}', '${D}')`))
+    .rows.map((r) => [r.user_id, `${r.first_name}|${r.last_name}`]));
+  check("a Google sign-up gets its first and last name from Google", names[C] === "Delger|Byambasukh", names[C]);
+  check("only a full name: first word, then the rest", names[D] === "Chirant|Rao Patel", names[D]);
+
+  const link = await as(db, A, `insert into public.calendar_feeds (user_id) values ('${A}') returning token`);
+  const token = link.rows[0].token;
+  check("a calendar link gets a 64-character random token", /^[0-9a-f]{64}$/.test(token), token);
+  check("one link per user", await fails(as(db, A, `insert into public.calendar_feeds (user_id) values ('${A}')`)));
+  check("a user can't choose their own token",
+    await fails(as(db, B, `insert into public.calendar_feeds (user_id, token) values ('${B}', '${"0".repeat(64)}')`)));
+  check("a user can't make a link for someone else", await fails(as(db, B, `insert into public.calendar_feeds (user_id) values ('${C}')`)));
+  check("another user can't see the link", (await as(db, B, `select * from public.calendar_feeds`)).rows.length === 0);
+  check("signed-out visitors can't read links", await fails(db.query(`set role anon; select * from public.calendar_feeds`)).then(async (r) => {
+    await db.exec(`reset role`); return r; }));
+
+  await db.exec(`set role anon`);
+  const feed = (await db.query(`select public.calendar_feed($1) as f`, [token])).rows[0].f;
+  const wrong = (await db.query(`select public.calendar_feed($1) as f`, ["0".repeat(64)])).rows[0].f;
+  const short = (await db.query(`select public.calendar_feed($1) as f`, [token.slice(0, 10)])).rows[0].f;
+  await db.exec(`reset role`);
+  // (the lecture was deleted by an accepted suggestion above; "Late study" is still there)
+  check("the link shows the owner's events and tasks", feed && feed.events.some((e) => e.name === "Late study")
+    && feed.tasks.some((t) => t.name === "PHY 183 problem set") && feed.timezone === "America/Chicago");
+  check("the link shows no journal, profile or suggestions", feed && Object.keys(feed).sort().join(",") === "events,tasks,timezone");
+  check("a wrong token shows nothing", wrong === null);
+  check("a cut-off token shows nothing", short === null);
+  check("signed-in users can't call the link function", await fails(as(db, B, `select public.calendar_feed('${token}')`)));
+  const removed = await as(db, A, `delete from public.calendar_feeds`);
+  await db.exec(`set role anon`);
+  const afterOff = (await db.query(`select public.calendar_feed($1) as f`, [token])).rows[0].f;
+  await db.exec(`reset role`);
+  check("turning the link off stops it working", removed.affectedRows === 1 && afterOff === null);
+}
+
+// Importing other calendars (seventh migration).
+if (process.argv.length > 8) {
+  const GOOGLE = "https://calendar.google.com/calendar/ical/alex%40gmail.com/private-abc123/basic.ics";
+  const imp = await as(db, A, `insert into public.calendar_imports (name, url) values ('Google Calendar', $1) returning import_id, user_id`, [GOOGLE]);
+  const importId = imp.rows[0].import_id;
+  check("a user can import a calendar (their own row, by default)", imp.rows[0].user_id === A);
+  check("only https addresses are stored", await fails(as(db, A, `insert into public.calendar_imports (name, url) values ('x', 'webcal://example.com/a.ics')`)));
+  check("the same address can't be imported twice", await fails(as(db, A, `insert into public.calendar_imports (name, url) values ('Again', $1)`, [GOOGLE])));
+  check("another user can't see the import (or its secret address)", (await as(db, B, `select * from public.calendar_imports`)).rows.length === 0);
+  check("signed-out visitors can't read imports", await fails(db.query(`set role anon; select * from public.calendar_imports`)).then(async (r) => {
+    await db.exec(`reset role`); return r; }));
+
+  const imported = (name, key, day = "2026-11-19") => as(db, A, `insert into public.calendar_events
+    (name, start_date, start_time, end_date, end_time, changeable, import_id, external_id)
+    values ($1, $2, '09:00', $2, '10:00', false, $3, $4) on conflict (import_id, external_id) do nothing returning event_id`,
+    [name, day, importId, key]);
+  check("an imported event is stored with its import and id there", (await imported("Standup", "abc@google.com|2026-11-19T14:00:00Z")).rows.length === 1);
+  check("the same event twice is skipped, not doubled (two syncs at once)",
+    (await imported("Standup", "abc@google.com|2026-11-19T14:00:00Z")).rows.length === 0);
+  await imported("Dentist", "dentist@google.com", "2026-11-20");
+  check("an import needs its event id, and the other way round", await fails(as(db, A, `insert into public.calendar_events
+    (name, start_date, start_time, end_date, end_time, import_id) values ('x', '2026-11-19', '09:00', '2026-11-19', '10:00', $1)`, [importId])));
+  check("nobody can attach events to someone else's import", await fails(as(db, B, `insert into public.calendar_events
+    (name, start_date, start_time, end_date, end_time, import_id, external_id)
+    values ('x', '2026-11-19', '09:00', '2026-11-19', '10:00', $1, 'x')`, [importId])));
+
+  const link = await as(db, A, `insert into public.calendar_feeds (user_id) values ('${A}') returning token`);
+  await db.exec(`set role anon`);
+  const feed = (await db.query(`select public.calendar_feed($1) as f`, [link.rows[0].token])).rows[0].f;
+  await db.exec(`reset role`);
+  check("the calendar link leaves imported events out (no doubles in Google)",
+    feed.events.some((e) => e.name === "Late study") && !feed.events.some((e) => e.name === "Standup" || e.name === "Dentist"),
+    feed.events.map((e) => e.name).join(", "));
+  check("signed-in users still can't call the link function", await fails(as(db, B, `select public.calendar_feed('${link.rows[0].token}')`)));
+
+  await as(db, A, `delete from public.calendar_imports where import_id = $1`, [importId]);
+  const left = (await as(db, A, `select name from public.calendar_events order by name`)).rows.map((r) => r.name);
+  check("removing an import removes its events, and only those", !left.includes("Standup") && !left.includes("Dentist") && left.includes("Late study"), left.join(", "));
+}
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nAll checks passed");
 process.exit(failures ? 1 : 0);

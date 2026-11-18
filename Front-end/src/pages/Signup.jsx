@@ -1,15 +1,18 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
 import { PRIORITY_OPTIONS, applyOnboarding, savePending } from "../lib/onboarding";
+import { GOOGLE_PENDING, signInWithGoogle } from "../lib/auth";
 import { go } from "../lib/route";
 import { Alert, Box, Field, Logo, ProgressBar, ThemeToggle } from "../components/ui";
-import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, Lock } from "../components/ui/icons";
+import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, GoogleG, Lock } from "../components/ui/icons";
 import { CommitmentForm, CommitmentRow, DETECTED_ZONE, PriorityPicker, TimezoneSelect, WorkTimeChoice } from "../components/profile";
 import { friendlyAuthError } from "./Login";
 
 // Sign-up / onboarding: four steps on one page. The account is created at the end (the same Supabase
 // sign-up as before, with the name and time zone the database copies into the profile), then the rest
-// is saved to the profile and the calendar (lib/onboarding.js).
+// is saved to the profile and the calendar (lib/onboarding.js). With "Sign up with Google" the first step asks
+// nothing (Google gives the name and email): the answers wait in this browser, the person goes to Google at the
+// end, and the app saves them on the way back (App.jsx).
 
 const STEPS = ["Account", "Hobbies & priorities", "Work style", "Fixed commitments"];
 const MIN_PASSWORD = 6; // Supabase's minimum, as before
@@ -40,8 +43,9 @@ function Signup() {
   const [errorKey, setErrorKey] = useState(0);
   const [busy, setBusy] = useState(false);
   const [waitingForEmail, setWaitingForEmail] = useState(false);
+  const [viaGoogle, setViaGoogle] = useState(false);
 
-  const accountValid = account.first.trim() && validEmail(account.email) && account.password.length >= MIN_PASSWORD;
+  const accountValid = viaGoogle || (account.first.trim() && validEmail(account.email) && account.password.length >= MIN_PASSWORD);
   const stepValid = [Boolean(accountValid), true, true, true];
   const reachable = (i) => stepValid.slice(0, i).every(Boolean);
   const pw = strength(account.password);
@@ -61,9 +65,25 @@ function Signup() {
     setStep((s) => s + 1);
   }
 
+  function chooseGoogle() {
+    setViaGoogle(true);
+    setError("");
+    setStep(1);
+  }
+
   async function finish() {
     setBusy(true);
     setError("");
+    if (viaGoogle) {
+      savePending(GOOGLE_PENDING, { priorities, workTime, motivation, timezone, commitments });
+      try {
+        await signInWithGoogle(); // leaves the page; the answers are saved when Google sends them back
+      } catch (err) {
+        setBusy(false);
+        fail(err.message);
+      }
+      return;
+    }
     const email = account.email.trim();
     // The same sign-up as before: the name and time zone go along, and the database makes the profile.
     const { data, error: authError } = await supabase.auth.signUp({
@@ -121,9 +141,22 @@ function Signup() {
     {
       kicker: "Account",
       title: "Let's set you up.",
-      lede: "Start with the basics. You can change all of this later in Settings.",
-      body: (
+      lede: viaGoogle
+        ? "You'll pick your Google account at the end. Your name and email come from Google."
+        : "Start with the basics. You can change all of this later in Settings.",
+      body: viaGoogle ? (
         <>
+          <div className="why-card"><span className="google-chosen"><GoogleG size={22} /> Signing up with Google</span></div>
+          <button type="button" className="btn surface" style={{ alignSelf: "flex-start" }} onClick={() => setViaGoogle(false)}>
+            Use email and a password instead
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="btn big full surface google-btn" onClick={chooseGoogle}>
+            <GoogleG size={22} /> Sign up with Google
+          </button>
+          <p className="or-line"><span>or with email</span></p>
           <div className="row2">
             <Field label="First name" autoComplete="given-name" value={account.first}
               onChange={(e) => setAccount({ ...account, first: e.target.value })} required />
@@ -156,7 +189,8 @@ function Signup() {
       why: (
         <>
           <h2>Your account, kept safe</h2>
-          <p>Sign-in is handled by Supabase Auth, so your password is never stored in Steady's own database.</p>
+          <p>Sign-in is handled by Supabase Auth, so your password is never stored in Steady's own database. With Google,
+            Steady never sees your Google password.</p>
           <div className="why-card">You can change your name, email and everything else in Settings.</div>
         </>
       ),
@@ -288,7 +322,9 @@ function Signup() {
               </button>
             ) : (
               <button type="button" className="btn green" onClick={finish} disabled={busy || !accountValid}>
-                {busy ? "Creating your planner…" : <>Create my planner <ArrowRight width={18} height={18} /></>}
+                {busy ? "Creating your planner…" : viaGoogle
+                  ? <><GoogleG size={18} /> Continue with Google</>
+                  : <>Create my planner <ArrowRight width={18} height={18} /></>}
               </button>
             )}
           </div>

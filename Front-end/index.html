@@ -5,6 +5,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Steady Planner</title>
+    <!-- Installable as an app ("Add to Home Screen"): name, icon, full screen, and the bar color per theme. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Steady" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="theme-color" content="#FFF5DC" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000A23" media="(prefers-color-scheme: dark)" />
     <!-- Set the theme before the first paint, so dark mode never flashes light. -->
     <script>
       (function () {

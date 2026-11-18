@@ -21,3 +21,4 @@ out/
 
 # the pod's settings, made by deploy/make_pod_bundle.sh inside the bundle only
 deploy/pod.env
+prior-data/

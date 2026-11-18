@@ -56,4 +56,9 @@ export const ai = {
   forgetMemory: (memoryId) => call(`/memories/${memoryId}`, { method: "DELETE" }),
   rememberJournal: (journalId) => call(`/memories/journal/${journalId}`),
   forgetJournal: (journalId) => call(`/memories/journal/${journalId}`, { method: "DELETE" }),
+
+  // Imported calendars (Google, iCloud, Outlook): the server downloads the private .ics address and saves the events.
+  importCalendar: (url, name = "") => call("/calendars", { body: { url, name } }),
+  // {import_id} for one, {older_than_minutes} for the ones not tried lately, {} for all. Returns one result each.
+  syncCalendars: (options = {}) => call("/calendars/sync", { body: options }),
 };

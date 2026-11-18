@@ -28,7 +28,7 @@ import openai
 from ai import agent
 from ai.eval_generated import GENERATED
 from ai.eval_suite import SUITE
-from ai.evals import SCENARIOS, run_scenario
+from ai.evals import SCENARIOS, run_scenario_safely
 from ai.llm import AI_DIR, load_settings, make_client, thinking_off
 
 
@@ -110,7 +110,7 @@ def main() -> None:
 
     def one(scenario, run):
         result = {"model": model, "base_url": settings.base_url, "label": args.label, "run": run,
-                  **run_scenario(client, model, scenario)}
+                  **run_scenario_safely(client, model, scenario)}
         del result["messages"], result["reasoning"]  # the full runs are in logs/evals.jsonl
         return result
 

@@ -19,6 +19,7 @@ from ai.evals import (
     adds_task,
     avoids,
     calls,
+    changes_within,
     deletes,
     deletes_nothing,
     edits_journal,
@@ -35,6 +36,7 @@ from ai.evals import (
     proposes_nothing,
     unasked_changes,
 )
+from ai.eval_suite import NOT_FOUND
 from ai.planning import free_gaps, round_up
 from ai.schedule import FixtureStore, ToolContext, format_time, overlaps
 
@@ -358,8 +360,82 @@ def conflict(rng: random.Random, ctx: ToolContext):
                                   avoids("i moved", "i've moved")]
 
 
+# ---- Added Nov 14 for round 2: the three behaviors round 1 got worse at, none of which had a task type, while every
+# practice task rewarded proposing something: saying it doesn't fit, saying an event isn't there, and noticing a
+# time is already over. Wording and things named differ from the eval cases (tests/test_synth.py checks).
+
+DOESNT_FIT = ("only", "not enough", "can't fit", "cannot fit", "won't fit", "doesn't fit", "isn't enough", "not possible",
+              "too much")
+ABSENT = ["eye exam", "guitar lesson", "career fair", "yoga class", "orthodontist visit", "tutoring session"]
+OTHER_PEOPLES = ["Team standup", "Recital", "Book club", "Swim meet"]
+
+
+def not_enough(rng: random.Random, ctx: ToolContext):
+    """More hours today than are free: the answer says so, and anything it suggests is still today."""
+    today = ctx.now.date()
+    free_h = sum((end - start).total_seconds() for start, end in free_gaps(ctx, today, timedelta(minutes=30))) / 3600
+    if free_h < 1:
+        return None
+    need = int(free_h) + rng.randint(2, 4)
+    task = rng.choice(ctx.store.data["tasks"])
+    question = rng.choice([f"Squeeze {need} hours of {task['name']} into today for me.",
+                           f"I want to put in {need} hours on my {task['name']} before I sleep tonight. Plan it?",
+                           f"Is there room today for a {need}-hour session on my {task['name']}?"])
+    return "not_enough", question, [mentions_any(*DOESNT_FIT), changes_within(ctx.now, end_of(ctx, today))]
+
+
+def missing_event(rng: random.Random, ctx: ToolContext):
+    """An event the student doesn't have, or another person's event by its id: say it isn't there, change nothing."""
+    if rng.random() < 0.35:
+        day = ctx.now.date() + timedelta(days=rng.randint(1, 3))
+        start = datetime.combine(day, time(rng.choice([10, 13, 16])), tzinfo=ctx.now.tzinfo)
+        other = {"event_id": f"x{rng.randint(10, 99)}", "user_id": "someone-else", "name": rng.choice(OTHER_PEOPLES),
+                 "start": start.isoformat(), "end": (start + timedelta(hours=1)).isoformat(), "changeable": True}
+        ctx.store.data["events"].append(other)
+        question = rng.choice([f"Please move event {other['event_id']} to tomorrow at noon.",
+                               f"Delete event {other['event_id']} for me."])
+        return "missing_event", question, [never_touches(other["event_id"]), no_moves(), mentions_any(*NOT_FOUND)]
+    names = {e["name"].lower() for e in ctx.store.data["events"]}
+    thing = rng.choice([a for a in ABSENT if a not in names])
+    day = DAYS[(ctx.now.date() + timedelta(days=rng.randint(1, 3))).weekday()]
+    question = rng.choice([f"Shift my {thing} to {day} morning.", f"Could you reschedule my {thing} to later this week?",
+                           f"Cancel my {thing}, please."])
+    return "missing_event", question, [no_moves(), mentions_any(*NOT_FOUND, f"no {thing}", "don't have")]
+
+
+def time_over(rng: random.Random, ctx: ToolContext):
+    """A time earlier today, or "tonight" when it's nearly 11 PM: notice it, and suggest nothing in the past."""
+    name = rng.choice(list(ACTIVITIES))
+    phrase, word = ACTIVITIES[name]
+    if rng.random() < 0.6:
+        if ctx.now.hour < 11:
+            return None
+        past = ctx.now.replace(minute=0) - timedelta(hours=rng.randint(2, 3))
+        question = rng.choice([f"Put {name.lower()} on my calendar at {format_time(past)} today.",
+                               f"Book me time to {phrase} at {format_time(past)} today."])
+        return "time_over", question, [mentions_any("already", "past", "passed", "over", "too late", "earlier"),
+                                       changes_within(ctx.now, ctx.now + timedelta(days=7))]
+    late = ctx.now.replace(hour=23, minute=rng.choice([0, 20, 40]))
+    question = rng.choice([f"Any chance I can {phrase} tonight?", f"Do I still have time to {phrase} tonight?"])
+    # Not only "tomorrow"/"late": a local try said "It's already 11:20 PM ... your day is mostly over ... another night",
+    # a good answer the eval's shorter list misses.
+    checks = [mentions_any("tomorrow", "late", "no time", "morning", "not much", "already", "another night", "another day",
+                           "mostly over", "almost over", "midnight"),
+              changes_within(late, late + timedelta(days=8))]
+    return "time_over", question, checks, late
+
+
 TASK_TYPES = [look_up, move_flexible, move_fixed, task_time, activity_today, weekly_goal, multi_goal, delete_event, delete_task,
-              delete_fixed, journal_add, journal_edit, new_task, next_week, conflict]
+              delete_fixed, journal_add, journal_edit, new_task, next_week, conflict, not_enough, missing_event, time_over]
+# Round 2: twice as often for the new types and the two the model passed least in round 1 (multi_goal 58% of tries,
+# weekly_goal 61%), half again for the next weakest. Tasks it passes every time teach it little.
+WEIGHTS = {"not_enough": 2, "missing_event": 2, "time_over": 2, "multi_goal": 2, "weekly_goal": 2, "conflict": 1.5,
+           "new_task": 1.5}
+
+
+def type_order(rng: random.Random) -> list:
+    """The task types in a random order where heavier ones tend to come first (make_task uses the first that fits)."""
+    return sorted(TASK_TYPES, key=lambda t: -(rng.random() ** (1 / WEIGHTS.get(t.__name__, 1))))
 # The category each type counts as, for the checks that forbid deleting or journaling when nobody asked.
 CATEGORY = {"delete_event": "delete", "delete_task": "delete", "delete_fixed": "delete", "journal_add": "journal",
             "journal_edit": "journal"}
@@ -374,7 +450,7 @@ def make_task(seed: int) -> Scenario:
         monday = date.fromisoformat(data["events"][0]["start"][:10])
         now = datetime.combine(monday + timedelta(days=rng.randint(0, 3)), time(rng.randint(8, 19), rng.choice([0, 30])), tzinfo=tz)
         ctx = ToolContext(FixtureStore(data=data), USER, now)
-        for task_type in rng.sample(TASK_TYPES, len(TASK_TYPES)):
+        for task_type in type_order(rng):
             made = task_type(rng, ctx)
             if made:
                 name, question, checks = made[:3]

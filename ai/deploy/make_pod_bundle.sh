@@ -42,5 +42,13 @@ if [ -f "$FRONT_ENV" ]; then
 else
   echo "No $FRONT_ENV: pod.env not included; runpod_app.sh will ask for SUPABASE_URL and SUPABASE_ANON_KEY."
 fi
+# Training examples from earlier rounds for runpod_train.sh, e.g.
+#   PRIOR_DATA="ai/out/lora-selfrft-round1/*.jsonl" bash ai/deploy/make_pod_bundle.sh
+if [ -n "${PRIOR_DATA:-}" ]; then
+  mkdir -p "$STAGE/steady/ai/prior-data"
+  # shellcheck disable=SC2086  # PRIOR_DATA is a pattern to expand
+  cp $PRIOR_DATA "$STAGE/steady/ai/prior-data/" || { echo "No files match PRIOR_DATA=$PRIOR_DATA" >&2; exit 1; }
+  echo "Included earlier training data: $(cat "$STAGE"/steady/ai/prior-data/*.jsonl | wc -l | tr -d ' ') examples"
+fi
 tar czf "$OUT" -C "$STAGE" steady
 echo "Wrote $OUT ($(wc -l < "$STAGE/files.txt" | tr -d ' ') files, $(du -h "$OUT" | cut -f1 | tr -d ' '))"

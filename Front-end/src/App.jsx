@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
 import Home from "./pages/Home";
@@ -6,6 +6,8 @@ import Settings from "./pages/Settings";
 import { Skeleton } from "./components/ui";
 import { profileIsEmpty } from "./lib/profile";
 import { applyOnboarding, takePending } from "./lib/onboarding";
+import { GOOGLE_PENDING, takeReturnTo, usesGoogle } from "./lib/auth";
+import { DETECTED_ZONE } from "./components/profile";
 import { go, useRoute } from "./lib/route";
 import { ai } from "./lib/ai";
 import { supabase } from "./lib/supabase";
@@ -15,10 +17,12 @@ import {
   deleteEvent,
   deleteJournal,
   deleteTask,
+  loadCalendarImports,
   loadMonth,
   loadPendingSuggestions,
   loadProfile,
   saveJournal,
+  saveProfile,
   updateTask,
 } from "./lib/data";
 
@@ -44,6 +48,13 @@ function App() {
     const { data: listener } = supabase.auth.onAuthStateChange((_event, newSession) => setSession(newSession));
     return () => listener.subscription.unsubscribe();
   }, []);
+
+  // Back from Google after connecting it in Settings: open Settings again.
+  useEffect(() => {
+    if (!session) return;
+    const page = takeReturnTo();
+    if (page) go(page);
+  }, [session]);
 
   // Signed in on the log-in or sign-up page: go home. Signed out anywhere else: go to log in.
   useEffect(() => {
@@ -73,13 +84,26 @@ function App() {
     if (session) reload();
   }, [session, reload]);
 
-  // The profile, once per sign-in. Answers from sign-up that waited for the email confirmation are saved first.
+  // The profile, once per sign-in. Answers from sign-up that waited for the email confirmation (or for a Google
+  // sign-up) are saved first.
   const userId = session?.user?.id;
   const userEmail = session?.user?.email;
   useEffect(() => {
     if (!userId) return;
+    const user = session.user;
     (async () => {
-      const pending = takePending(userEmail);
+      const google = usesGoogle(user);
+      const pending = takePending(userEmail) ?? (google ? takePending(GOOGLE_PENDING) : null);
+      // Google sends no time zone, so a brand-new Google account starts in the database's default zone: use this
+      // browser's instead (sign-up answers set it too, below).
+      const isNew = Date.now() - new Date(user.created_at).getTime() < 10 * 60 * 1000;
+      if (google && isNew && !pending && !user.user_metadata?.timezone) {
+        try {
+          await saveProfile(userId, { timezone: DETECTED_ZONE });
+        } catch {
+          // they can pick it in Settings
+        }
+      }
       if (pending) {
         try {
           await applyOnboarding(userId, pending);
@@ -101,6 +125,25 @@ function App() {
     })();
     reloadSuggestions();
   }, [userId, userEmail]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Imported calendars (Google, iCloud, Outlook): bring them up to date when the app opens, at most once an hour
+  // each. Quietly: if the AI server is off, the events from the last sync stay, and the next opening tries again.
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+  useEffect(() => {
+    if (!userId) return;
+    (async () => {
+      try {
+        const imports = await loadCalendarImports();
+        const stale = imports.some((i) => !i.last_checked_at || Date.now() - new Date(i.last_checked_at).getTime() > 3_600_000);
+        if (!stale) return;
+        const results = await ai.syncCalendars({ older_than_minutes: 60 });
+        if (results.some((r) => r.changed || r.removed)) reloadRef.current();
+      } catch {
+        // no imports table yet, or the AI server is off: try again next time
+      }
+    })();
+  }, [userId]);
 
   // Today's overview of yesterday (written once a day by the AI service, then saved).
   const loadOverview = useCallback(async (refresh = false) => {
